@@ -16,6 +16,7 @@ class UserRegistrationView(generics.CreateAPIView):
 
 class TenantRegistrationView(generics.CreateAPIView):
     serializer_class = TenantRegistrationSerializer
+    permission_classes = [IsSuperAdmin]
 
 
 class RoleTokenObtainPairSerializer(TokenObtainPairSerializer):
