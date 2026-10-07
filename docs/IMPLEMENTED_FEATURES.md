@@ -67,4 +67,18 @@ Only active cinemas are visible to regular users.
 
 ## 6. Automated checks
 
-Automated API tests cover account registration, sign-in, cinema registration, role-based visibility, create/update/delete access, and approval/rejection permissions. The authentication and cinema API test suites passed together with **15 tests**.
+## 6. Movie catalogue
+
+Movies are stored in the linked cinema's PostgreSQL schema. Each movie has a title, description, duration in minutes, language, genre, release date, and Draft, Active, or Inactive status. New movies always start as Draft.
+
+- For registration, a Tenant Admin sends the cinema schema in the `X-Schema-Name` header. The server verifies that the schema belongs to that account and saves the movie in that cinema.
+- For listing, a Tenant Admin gets only their own cinema's movies; a Super Admin may send `X-Schema-Name` to list one cinema or omit it to list across cinemas.
+- Tenant Admins can create, update, and delete movies only for their own cinema. They can change a movie from Draft to Active when it is ready.
+- Super Admins can view all movies but cannot create, update, or delete them.
+- Regular users can view Active movies only in Active cinemas.
+- The movie APIs support create, list, view, update, and delete.
+- Movie IDs are allocated across cinema schemas. A detail request returns `409 Conflict` if it finds the same ID in multiple schemas.
+
+## 7. Automated checks
+
+Automated API tests cover account registration, sign-in, cinema registration, movie access and validation, role-based visibility, create/update/delete access, and approval/rejection permissions.

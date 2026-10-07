@@ -2,9 +2,9 @@
 
 ## What this project is
 
-This project is the beginning of a cinema booking system. It currently provides APIs for user accounts, sign-in, cinema registration, cinema management, and cinema approval.
+This project is the foundation of a cinema booking system. It currently provides APIs for user accounts, sign-in, cinema registration and management, cinema approval, and cinema movie catalogues.
 
-**Important:** Movie listings, showtimes, seat selection, ticket booking, and payments are not implemented yet. Those would be later features.
+**Important:** Showtimes, seat selection, ticket booking, and payments are not implemented yet. Those would be later features.
 
 ## Who can use it
 
@@ -41,9 +41,19 @@ This project is the beginning of a cinema booking system. It currently provides 
 - Only a Super Admin can delete a cinema or approve/reject it.
 - Only Active cinemas are visible to regular users.
 
+### Movie catalogue
+
+- Each movie is stored in its cinema's PostgreSQL schema and linked to that cinema.
+- Movies include title, description, duration in minutes, language, genre, release date, and Draft/Active/Inactive status.
+- New movies always start as Draft. A Tenant Admin can later change the status to Active or Inactive.
+- Tenant Admins can create, update, and delete movies only for their own cinema.
+- Super Admins can view all movies but cannot create, update, or delete them.
+- Regular users can view Active movies only when their cinema is Active.
+- Movie IDs are allocated across cinemas so the existing `/api/movies/{id}/` routes can identify a movie. If duplicate IDs are encountered across schemas, the detail API responds with `409 Conflict`.
+
 ### Automated checks
 
-Automated API tests check account registration and authentication, cinema registration, role-based access, cinema changes, deletion, and approval/rejection. The authentication and cinema test suites passed together with 15 tests in the last recorded run.
+Automated API tests check account registration and authentication, cinema registration, role-based access, cinema changes, movie access and validation, deletion, and approval/rejection.
 
 ## API map
 
@@ -82,15 +92,28 @@ The cinema API prefix is `/api/cinemas/`.
 | Approve a cinema | `POST /api/cinemas/{id}/approve/` | Super Admin |
 | Reject a cinema | `POST /api/cinemas/{id}/reject/` | Super Admin |
 
+### Movie APIs
+
+The movie API prefix is `/api/movies/`. For movie registration, the Tenant Admin sends their own cinema's schema in the `X-Schema-Name` request header. The server checks that this schema belongs to the signed-in Tenant Admin, then stores the movie in it. The same header can be used with `GET /api/movies/` to select one cinema's movie list. A Tenant Admin can select only their own schema; a Super Admin can select any cinema's schema. Without the header, a Tenant Admin sees their own cinema's movies and a Super Admin sees movies across cinemas. The JSON body contains movie details such as `title`, `duration`, `language`, `genre`, and `release_date`; the cinema is selected by the checked header, not by a client-supplied cinema ID.
+
+| Action | Method and path | Access |
+|---|---|---|
+| Create a movie | `POST /api/movies/` | Tenant Admin for their own cinema |
+| List movies | `GET /api/movies/` | Signed-in user; results depend on role |
+| View a movie | `GET /api/movies/{id}/` | Super Admin, its Tenant Admin, or a User if the movie and cinema are Active |
+| Update a movie | `PUT` or `PATCH /api/movies/{id}/` | Its Tenant Admin |
+| Delete a movie | `DELETE /api/movies/{id}/` | Its Tenant Admin |
+
 ## Main project folders
 
 - `authentication/` contains user roles, account APIs, permissions, and authentication tests.
 - `cinema/` contains the cinema record, cinema APIs, permissions, approval actions, and cinema tests.
+- `movies/` contains cinema movie records, movie APIs, permissions, admin setup, and movie tests.
 - `config/` contains the Django project settings and the main URL routing.
 - `docs/` contains the project notes and implementation record.
 
 ## What could be added next
 
-The project currently handles the cinema setup and access-control foundation. Possible next steps are adding movies, cinema screens, showtimes, seats, bookings, ticket confirmation, and payment handling.
+The project currently handles the cinema setup, movie catalogue, and access-control foundation. Possible next steps are adding cinema screens, showtimes, seats, bookings, ticket confirmation, and payment handling.
 
 See [IMPLEMENTED_FEATURES.md](./IMPLEMENTED_FEATURES.md) for a shorter, step-by-step record of the features implemented.
