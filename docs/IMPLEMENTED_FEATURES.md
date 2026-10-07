@@ -79,6 +79,12 @@ Movies are stored in the linked cinema's PostgreSQL schema. Each movie has a tit
 - The movie APIs support create, list, view, update, and delete.
 - Movie IDs are allocated across cinema schemas. A detail request returns `409 Conflict` if it finds the same ID in multiple schemas.
 
-## 7. Automated checks
+## 7. Screen setup
+
+Tenant Admins can create, view, update, and delete screens for their own cinema. The cinema is determined from the signed-in Tenant Admin, so the create request does not accept another cinema's ID. Each screen has a name and total seat count. Super Admins can view screens; regular users can view screens in active cinemas.
+
+The Seat model is in place with seat number, row, and seat type, but individual seat APIs and Show scheduling are the next steps.
+
+## 8. Automated checks
 
 Automated API tests cover account registration, sign-in, cinema registration, movie access and validation, role-based visibility, create/update/delete access, and approval/rejection permissions.

@@ -2,9 +2,9 @@
 
 ## What this project is
 
-This project is the foundation of a cinema booking system. It currently provides APIs for user accounts, sign-in, cinema registration and management, cinema approval, and cinema movie catalogues.
+This project is the foundation of a cinema booking system. It currently provides APIs for user accounts, sign-in, cinema registration and management, cinema approval, movie catalogues, and screen management.
 
-**Important:** Showtimes, seat selection, ticket booking, and payments are not implemented yet. Those would be later features.
+**Important:** Individual seat setup, showtimes, seat selection, ticket booking, and payments are not implemented yet. Those would be later features.
 
 ## Who can use it
 
@@ -50,6 +50,14 @@ This project is the foundation of a cinema booking system. It currently provides
 - Super Admins can view all movies but cannot create, update, or delete them.
 - Regular users can view Active movies only when their cinema is Active.
 - Movie IDs are allocated across cinemas so the existing `/api/movies/{id}/` routes can identify a movie. If duplicate IDs are encountered across schemas, the detail API responds with `409 Conflict`.
+
+### Screen setup
+
+- Tenant Admins can create screens for their own cinema. The cinema is assigned from their account, not from a cinema ID in the request.
+- Each screen has a name and a total seat count.
+- Tenant Admins can list, view, update, and delete screens belonging to their cinema.
+- Super Admins can view screens but cannot change them. Regular users can view screens for active cinemas.
+- The Seat data model is present, but there is not yet an API to create or manage individual seats.
 
 ### Automated checks
 
@@ -104,16 +112,29 @@ The movie API prefix is `/api/movies/`. For movie registration, the Tenant Admin
 | Update a movie | `PUT` or `PATCH /api/movies/{id}/` | Its Tenant Admin |
 | Delete a movie | `DELETE /api/movies/{id}/` | Its Tenant Admin |
 
+### Screen APIs
+
+The screen API prefix is `/api/screens/`. Protected requests require a Bearer access token. Creating a screen uses the signed-in Tenant Admin's cinema automatically.
+
+| Action | Method and path | Access |
+|---|---|---|
+| Create a screen | `POST /api/screens/` | Tenant Admin |
+| List screens | `GET /api/screens/` | Signed-in user; results depend on role |
+| View one screen | `GET /api/screens/{id}/` | Super Admin, its Tenant Admin, or a User if the cinema is Active |
+| Update a screen | `PUT` or `PATCH /api/screens/{id}/` | Its Tenant Admin |
+| Delete a screen | `DELETE /api/screens/{id}/` | Its Tenant Admin |
+
 ## Main project folders
 
 - `authentication/` contains user roles, account APIs, permissions, and authentication tests.
 - `cinema/` contains the cinema record, cinema APIs, permissions, approval actions, and cinema tests.
 - `movies/` contains cinema movie records, movie APIs, permissions, admin setup, and movie tests.
+- `shows/` currently contains Screen and Seat models, screen APIs, and screen tests. Show scheduling is not implemented yet.
 - `config/` contains the Django project settings and the main URL routing.
 - `docs/` contains the project notes and implementation record.
 
 ## What could be added next
 
-The project currently handles the cinema setup, movie catalogue, and access-control foundation. Possible next steps are adding cinema screens, showtimes, seats, bookings, ticket confirmation, and payment handling.
+The project currently handles cinema setup, movie catalogues, screen setup, and access control. Possible next steps are individual seat setup, show scheduling, bookings, ticket confirmation, and payment handling.
 
 See [IMPLEMENTED_FEATURES.md](./IMPLEMENTED_FEATURES.md) for a shorter, step-by-step record of the features implemented.

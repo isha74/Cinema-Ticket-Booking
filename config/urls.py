@@ -24,5 +24,6 @@ urlpatterns = [
     path("api/auth/", include("authentication.urls")),
     path("api/cinemas/", include("cinema.urls")),
     path("api/movies/", include("movies.urls")),
+    path("api/screens/", include("shows.urls")),
 
 ]
