@@ -136,6 +136,24 @@ class MovieAPITests(TestCase):
             {"Other Movie"},
         )
 
+    def test_schema_header_returns_all_cinema_movies_for_tenant_and_super_admin(self):
+        self.create_movie(self.cinema, "Second Cinema Movie")
+        expected_titles = {"Active Movie", "Second Cinema Movie"}
+
+        for user in (self.tenant_admin, self.super_admin):
+            with self.subTest(role=user.role):
+                self.client.force_authenticate(user)
+                response = self.client.get(
+                    "/api/movies/",
+                    HTTP_X_SCHEMA_NAME=self.cinema.schema_name,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    {movie["title"] for movie in response.data},
+                    expected_titles,
+                )
+
     def test_superuser_with_user_role_still_sees_draft_movies(self):
         self.movie.status = Movie.Status.DRAFT
         with cinema_schema(self.cinema.schema_name):
