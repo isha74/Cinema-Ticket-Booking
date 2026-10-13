@@ -6,7 +6,7 @@ from cinema.models import Cinema
 class Screen(models.Model):
     cinema = models.ForeignKey(
         Cinema,
-        on_delete=models.CASCADE,
+        on_delete=models.DO_NOTHING,
         related_name="screens",
     )
     name = models.CharField(max_length=100)

@@ -81,9 +81,9 @@ Movies are stored in the linked cinema's PostgreSQL schema. Each movie has a tit
 
 ## 7. Screen setup
 
-Tenant Admins can create, view, update, and delete screens for their own cinema. The cinema is determined from the signed-in Tenant Admin, so the create request does not accept another cinema's ID. Each screen has a name and total seat count. Super Admins can view screens; regular users can view screens in active cinemas.
+Screen and Seat tables are stored in each cinema's PostgreSQL schema. Screen requests use the `X-Schema-Name` header; the API validates that the selected schema belongs to the signed-in Tenant Admin (or is otherwise visible to the requesting role). The cinema is assigned from the selected schema and is never accepted from the request body. Creating or listing a screen provisions that cinema's Screen and Seat tables when needed. Existing Screen and Seat rows are moved from `public` into their cinema's schema by the shows migration.
 
-The Seat model is in place with seat number, row, and seat type, but individual seat APIs and Show scheduling are the next steps.
+Tenant Admins can create, view, update, and delete screens for their own cinema. Each screen has a name and total seat count. Super Admins can view screens; regular users can view screens in active cinemas. The Seat model is present in each cinema schema, but individual seat APIs and Show scheduling are the next steps. For Tenant Admin screen requests, send `X-Schema-Name: <your cinema schema>` alongside the access token.
 
 ## 8. Automated checks
 

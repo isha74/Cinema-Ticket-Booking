@@ -53,7 +53,8 @@ This project is the foundation of a cinema booking system. It currently provides
 
 ### Screen setup
 
-- Tenant Admins can create screens for their own cinema. The cinema is assigned from their account, not from a cinema ID in the request.
+- Screen and Seat tables are stored in each cinema's PostgreSQL schema. Screen requests use `X-Schema-Name`, which is checked against the authenticated user's access.
+- Tenant Admins can create screens for their own cinema. The cinema is assigned from the selected, verified schema, not from a cinema ID in the request.
 - Each screen has a name and a total seat count.
 - Tenant Admins can list, view, update, and delete screens belonging to their cinema.
 - Super Admins can view screens but cannot change them. Regular users can view screens for active cinemas.
@@ -114,15 +115,17 @@ The movie API prefix is `/api/movies/`. For movie registration, the Tenant Admin
 
 ### Screen APIs
 
+Tenant Admin screen requests must include `X-Schema-Name` with their cinema's schema; the API checks that it belongs to the authenticated account. Super Admins and regular users can omit the header when listing all screens visible to them. Detail requests require the header to identify the cinema schema. The body does not contain a cinema ID.
+
 The screen API prefix is `/api/screens/`. Protected requests require a Bearer access token. Creating a screen uses the signed-in Tenant Admin's cinema automatically.
 
 | Action | Method and path | Access |
 |---|---|---|
-| Create a screen | `POST /api/screens/` | Tenant Admin |
-| List screens | `GET /api/screens/` | Signed-in user; results depend on role |
-| View one screen | `GET /api/screens/{id}/` | Super Admin, its Tenant Admin, or a User if the cinema is Active |
-| Update a screen | `PUT` or `PATCH /api/screens/{id}/` | Its Tenant Admin |
-| Delete a screen | `DELETE /api/screens/{id}/` | Its Tenant Admin |
+| Create a screen | `POST /api/screens/` | Tenant Admin; must send its `X-Schema-Name` |
+| List screens | `GET /api/screens/` | Signed-in user; Tenant Admin must send its `X-Schema-Name`; others may filter with it |
+| View one screen | `GET /api/screens/{id}/` | Super Admin, its Tenant Admin, or a User if the cinema is Active; send `X-Schema-Name` |
+| Update a screen | `PUT` or `PATCH /api/screens/{id}/` | Its Tenant Admin; send its `X-Schema-Name` |
+| Delete a screen | `DELETE /api/screens/{id}/` | Its Tenant Admin; send its `X-Schema-Name` |
 
 ## Main project folders
 
