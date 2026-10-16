@@ -30,3 +30,13 @@ class SeatListCreatePermission(TenantAdminOnlyPermission):
 
 class SeatObjectPermission(TenantAdminOnlyPermission):
     pass
+
+
+class ShowSeatAvailabilityPermission(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return (
+            user.is_authenticated
+            and not user.is_superuser
+            and user.role in (User.Role.TENANT_ADMIN, User.Role.USER)
+        )

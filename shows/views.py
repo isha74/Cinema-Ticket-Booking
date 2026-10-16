@@ -1,10 +1,13 @@
 from django.db import transaction
+from django.db.models.deletion import ProtectedError
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from authentication.models import User
+from bookings.models import BookingSeat
 from cinema.models import Cinema
 from movies.schema import ensure_movie_table
 
@@ -13,9 +16,9 @@ from .permissions import (
     ScreenListCreatePermission,
     ScreenObjectPermission,
     SeatListCreatePermission,
-    SeatObjectPermission,
+    ShowSeatAvailabilityPermission,
 )
-from .schema import cinema_schema, ensure_screen_tables, ensure_show_tables
+from .schema import cinema_schema, ensure_show_tables
 from .serializers import (
     ScreenLayoutSerializer,
     ScreenSerializer,
@@ -37,12 +40,11 @@ def cinema_for_user(user):
 
 
 def prepare_tenant_schema(cinema):
-    ensure_screen_tables(cinema.schema_name)
+    ensure_movie_table(cinema.schema_name)
 
 
 def prepare_show_schema(cinema):
     prepare_tenant_schema(cinema)
-    ensure_movie_table(cinema.schema_name)
     ensure_show_tables(cinema.schema_name)
 
 
@@ -114,7 +116,23 @@ class ScreenDetailView(TenantSchemaViewMixin, generics.RetrieveUpdateDestroyAPIV
         return self._run_in_tenant_schema(request, super().patch, *args, **kwargs)
 
     def delete(self, request, *args, **kwargs):
-        return self._run_in_tenant_schema(request, super().delete, *args, **kwargs)
+        try:
+            return self._run_in_tenant_schema(
+                request,
+                super().delete,
+                *args,
+                **kwargs,
+            )
+        except ProtectedError:
+            return Response(
+                {
+                    "detail": (
+                        "This screen cannot be deleted because its seats are "
+                        "referenced by booking history."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
 
 
 class ScreenLayoutView(APIView):
@@ -286,22 +304,55 @@ class ShowSeatPriceView(TenantSchemaViewMixin, APIView):
 
 class ShowSeatListView(TenantSchemaViewMixin, generics.ListAPIView):
     serializer_class = ShowSeatListSerializer
-    permission_classes = [SeatListCreatePermission]
+    permission_classes = [ShowSeatAvailabilityPermission]
 
     def list(self, request, *args, **kwargs):
-        self.prepare_show(request)
-        with cinema_schema(self.cinema.schema_name):
+        if request.user.role == User.Role.TENANT_ADMIN and not request.user.is_superuser:
+            cinema = cinema_for_user(request.user)
+        elif request.user.role == User.Role.USER and not request.user.is_superuser:
+            cinema_slug = request.query_params.get("cinema_slug")
+            if not cinema_slug:
+                raise ValidationError(
+                    {"cinema_slug": "This query parameter is required."}
+                )
+            cinema = Cinema.objects.filter(
+                slug=cinema_slug,
+                status=Cinema.Status.ACTIVE,
+            ).first()
+            if cinema is None:
+                raise NotFound("Active cinema not found.")
+        else:
+            raise PermissionDenied("Only customers and tenant admins can view seats.")
+
+        self.cinema = cinema
+        prepare_show_schema(cinema)
+        with cinema_schema(cinema.schema_name):
             show = Show.objects.filter(
                 pk=self.kwargs["show_id"],
-                screen__cinema_id=self.cinema.pk,
-            ).select_related("screen").first()
+                screen__cinema_id=cinema.pk,
+            ).select_related("screen", "movie").first()
             if show is None:
                 raise NotFound("Show not found.")
+            if request.user.role == User.Role.USER and (
+                cinema.status != Cinema.Status.ACTIVE
+                or show.movie.status != show.movie.Status.ACTIVE
+            ):
+                raise NotFound("Show not found.")
             show_prices = dict(show.seat_prices.values_list("seat_type", "price"))
+            booked_seat_ids = set(
+                BookingSeat.objects.filter(
+                    show=show,
+                    is_active=True,
+                )
+                .values_list("seat_id", flat=True)
+            )
             seats = list(show.screen.seats.all())
             serializer = self.get_serializer(
                 seats,
                 many=True,
-                context={"show_prices": show_prices},
+                context={
+                    "show_prices": show_prices,
+                    "booked_seat_ids": booked_seat_ids,
+                },
             )
             return Response(serializer.data)

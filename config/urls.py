@@ -30,6 +30,7 @@ urlpatterns = [
     path("api/cinemas/", include("cinema.urls")),
     path("api/movies/", include("movies.urls")),
     path("api/shows/", include("shows.urls")),
+    path("api/bookings/", include("bookings.urls")),
     path("api/screens/", ScreenListCreateView.as_view(), name="legacy-screen-list-create"),
     path("api/screens/<int:pk>/", ScreenDetailView.as_view(), name="legacy-screen-detail"),
 

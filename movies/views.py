@@ -7,6 +7,7 @@ from rest_framework.exceptions import (
 )
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.db.models.deletion import ProtectedError
 
 from authentication.models import User
 from cinema.models import Cinema
@@ -170,8 +171,20 @@ class MovieDetailView(APIView):
         if isinstance(match, Response):
             return match
         schema_name, movie_id = match
+        ensure_movie_table(schema_name)
         movie = self._load_movie(schema_name, movie_id)
         self.check_object_permissions(request, movie)
         with cinema_schema(schema_name):
-            movie.delete()
+            try:
+                movie.delete()
+            except ProtectedError:
+                return Response(
+                    {
+                        "detail": (
+                            "This movie cannot be deleted because it has "
+                            "booking history."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
         return Response(status=status.HTTP_204_NO_CONTENT)

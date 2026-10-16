@@ -255,10 +255,14 @@ class ShowPriceConfigurationSerializer(serializers.Serializer):
 
 class ShowSeatListSerializer(SeatSerializer):
     price = serializers.SerializerMethodField()
+    is_available = serializers.SerializerMethodField()
 
     class Meta(SeatSerializer.Meta):
-        fields = SeatSerializer.Meta.fields + ("price",)
+        fields = SeatSerializer.Meta.fields + ("price", "is_available")
 
     def get_price(self, seat):
         prices = self.context["show_prices"]
         return prices.get(seat.seat_type)
+
+    def get_is_available(self, seat):
+        return seat.pk not in self.context.get("booked_seat_ids", set())

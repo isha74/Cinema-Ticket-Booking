@@ -1,106 +1,86 @@
-# What Has Been Implemented
+# Implemented Features
 
-This note explains the cinema booking project features in a simple, step-by-step way.
+This document summarizes the implemented API behavior. See [PROJECT_OVERVIEW.md](./PROJECT_OVERVIEW.md) for the complete setup sequence, request examples, and end-to-end workflow.
 
-## 1. User types
+## Roles and authentication
 
-The system has three kinds of users:
+- **Super Admin:** manages platform-level cinema administration, including approving and rejecting cinema registrations.
+- **Tenant Admin:** manages the cinema they own.
+- **User:** regular account; can view active show seat availability, make bookings, view their bookings, and cancel before a show starts.
 
-- **Super Admin**: manages all cinemas and approves or rejects cinema registrations.
-- **Tenant Admin**: manages the cinema they own.
-- **User**: can browse cinemas that have been approved and are active.
+Protected APIs use JWT access tokens:
 
-## 2. Accounts and sign-in
-
-People can create a regular user account and sign in to receive access tokens. The system uses these tokens to recognize users on protected API requests.
-
-- A public registration request creates a regular **User** account.
-- A **Super Admin** can create a **Tenant Admin** account.
-- Signing in returns tokens that include the user's role.
-- A signed-in user can view their own account details.
-- Only a **Super Admin** can view another user's account details.
-- Users can sign out or request a refreshed access token.
-
-## 3. Cinema registration
-
-A cinema owner can register a cinema and a tenant-admin account together. The cinema starts with **Pending** status, so it is not shown to regular users until a Super Admin approves it.
-
-Cinema details include its name, web domain, address, city, and contact information. The system also creates identifying cinema details automatically.
-
-## 4. Cinema APIs and access
-
-All cinema routes start with `/api/cinemas/`.
-
-| Action | API | Who can use it |
-|---|---|---|
-| Register a cinema and its owner | `POST /api/cinemas/register/` | Anyone |
-| List cinemas | `GET /api/cinemas/` | Signed-in users; results depend on role |
-| Create a cinema through the management API | `POST /api/cinemas/` | Super Admin |
-| View one cinema | `GET /api/cinemas/{id}/` | Super Admin; its Tenant Admin; or any user if the cinema is active |
-| Change cinema details | `PUT` or `PATCH /api/cinemas/{id}/` | Super Admin or that cinema's Tenant Admin |
-| Delete a cinema | `DELETE /api/cinemas/{id}/` | Super Admin |
-| Approve a cinema | `POST /api/cinemas/{id}/approve/` | Super Admin |
-| Reject a cinema | `POST /api/cinemas/{id}/reject/` | Super Admin |
-
-For protected requests, include the access token in the request header:
-
-```text
+```http
 Authorization: Bearer <access_token>
 ```
 
-### What each role can see
+Only Tenant Admins can use the current screen, seat, show, and show-price endpoints. This applies to reads as well as writes. Super Admins and regular Users are denied access.
 
-- **Super Admin** can see all cinemas.
-- **Tenant Admin** can see only the cinema they own.
-- **User** can see only active cinemas.
+## Accounts and cinemas
 
-Tenant Admins cannot delete cinemas or approve/reject them. Regular users cannot create, change, or delete cinemas.
+- `POST /api/auth/register/` creates a regular User account.
+- `POST /api/cinemas/register/` creates a Tenant Admin and a Pending cinema together.
+- `POST /api/auth/login/` returns access and refresh tokens with the user's role claim.
+- `POST /api/auth/refresh/` refreshes an access token.
+- `POST /api/cinemas/{id}/approve/` and `/reject/` are Super Admin operations.
+- Cinema list/detail and management permissions depend on the account role and cinema status.
 
-## 5. Approval and cinema status
+## Movie catalogue
 
-Cinema registrations begin as **Pending**. A Super Admin can:
+Movies are stored in the tenant cinema schema. The movie APIs support create, list, retrieve, update, and delete.
 
-- **Approve** a cinema, changing its status to **Active**.
-- **Reject** a cinema, changing its status to **Rejected**.
+- A Tenant Admin can manage movies only for their own cinema.
+- `POST /api/movies/` requires `X-Schema-Name`; the server verifies it matches the authenticated Tenant Admin's cinema.
+- Movie `cinema` and `status` are read-only on create. Newly created movies start as `DRAFT`.
+- A Tenant Admin may update a movie's status when appropriate. The show API currently checks cinema ownership, not whether the movie is `ACTIVE`.
+- Regular Users see only Active movies for Active cinemas.
+- Movie list behavior for Super Admins can use the schema header to select a cinema or omit it to list across cinemas.
 
-Only active cinemas are visible to regular users.
+The screen/show APIs do **not** use `X-Schema-Name`; they derive their tenant schema from the authenticated Tenant Admin.
 
-## 6. Automated checks
+## Screens, permanent layouts, shows, and prices
 
-## 6. Movie catalogue
+The workflow is sequential. Movie, screen, seat, show, and show-price data is tenant-local; the backend associates requests with the cinema owned by the authenticated Tenant Admin.
 
-Movies are stored in the linked cinema's PostgreSQL schema. Each movie has a title, description, duration in minutes, language, genre, release date, and Draft, Active, or Inactive status. New movies always start as Draft.
+### 1. Create a screen
 
-- For registration, a Tenant Admin sends the cinema schema in the `X-Schema-Name` header. The server verifies that the schema belongs to that account and saves the movie in that cinema.
-- For listing, a Tenant Admin gets only their own cinema's movies; a Super Admin may send `X-Schema-Name` to list one cinema or omit it to list across cinemas.
-- Tenant Admins can create, update, and delete movies only for their own cinema. They can change a movie from Draft to Active when it is ready.
-- Super Admins can view all movies but cannot create, update, or delete them.
-- Regular users can view Active movies only in Active cinemas.
-- The movie APIs support create, list, view, update, and delete.
-- Movie IDs are allocated across cinema schemas. A detail request returns `409 Conflict` if it finds the same ID in multiple schemas.
+**`POST /api/shows/screens/`**
 
-## 7. Screen setup
+```json
+{
+  "name": "Screen 1",
+  "total_seats": 150
+}
+```
 
-Screen, Seat, Show, and show-specific seat-price tables are stored in each cinema's PostgreSQL schema. All screen, layout, show, and price APIs require a Tenant Admin access token. The server derives the cinema and schema from the authenticated Tenant Admin's cinema record; do not send a schema in the body or an `X-Schema-Name` header.
+The cinema is assigned by the server. Screen names must be unique within a cinema.
 
-| Action | API | Description |
-|---|---|---|
-| Create a screen | `POST /api/shows/screens/` | Body: `name`, `total_seats`; cinema is assigned from the authenticated account |
-| List screens | `GET /api/shows/screens/` | Lists the signed-in Tenant Admin's screens |
-| Configure a permanent screen layout | `POST /api/shows/screens/{id}/configure-layout/` | Generates seats once with row, number, type, and gap positions |
-| Retrieve seats in a screen | `GET /api/shows/screens/{id}/seats/` | Returns the permanent screen layout |
-| Create a show | `POST /api/shows/` | Links a same-cinema movie and configured screen with a date and start/end times |
-| List shows | `GET /api/shows/` | Lists shows for the signed-in Tenant Admin's cinema |
-| View a show | `GET /api/shows/{id}/` | Returns scheduled show details |
-| Set or change prices for a show | `PUT /api/shows/{id}/prices/` | Replaces the prices for all seat categories used by that screen |
-| Retrieve show prices | `GET /api/shows/{id}/prices/` | Returns that show's category prices |
-| Retrieve seats with a show's prices | `GET /api/shows/{id}/seats/` | Returns permanent seats with prices from the selected show |
+### 2. Configure the screen's permanent layout
 
-Layout requests include a `rows` array with each row's `label`, `seat_count`, and `seat_type`; optional `gaps_after` values insert aisle gaps after the specified seat positions. Supported types are `NORMAL`, `GOLD`, `PREMIUM`, and `RECLINER`. The generated seat count must equal the screen capacity, and duplicate row labels and seat numbers are rejected. The layout can only be configured once; subsequent attempts to change it are rejected.
+**`POST /api/shows/screens/{screen_id}/configure-layout/`**
 
-Show requests include `movie`, `screen`, `show_date`, `start_time`, and `end_time`. The API rejects movies or screens from another cinema and overlapping shows on the same screen. Price requests contain a `prices` array with exactly one positive price for every seat category on the screen. Seats are not modified when show-specific prices change.
+The request contains a `rows` array. Every row has `label`, `seat_count`, and `seat_type`; `gaps_after` is optional.
 
-Example show request:
+```json
+{
+  "rows": [
+    {"label": "A", "seat_count": 15, "seat_type": "NORMAL", "gaps_after": [5, 10]},
+    {"label": "B", "seat_count": 15, "seat_type": "GOLD"},
+    {"label": "C", "seat_count": 15, "seat_type": "PREMIUM"},
+    {"label": "D", "seat_count": 15, "seat_type": "RECLINER"}
+  ]
+}
+```
+
+That example defines 60 seats, so it is valid only for a screen whose capacity is 60. The sum of the row seat counts must equal `total_seats`; aisle gaps do not count as seats. Seat numbers are generated from the row label and ordinal (`A1`, `A2`, etc.). `gaps_after` inserts a positional gap after the specified seat without changing the seat count.
+
+Supported seat types are `NORMAL`, `GOLD`, `PREMIUM`, and `RECLINER`. The API rejects duplicate row labels, duplicate generated seat numbers, invalid gap positions, and capacity mismatches. Layout configuration is one-time; another attempt returns `409 Conflict`. Screen capacity cannot be changed after seats are configured.
+
+**`GET /api/shows/screens/{screen_id}/seats/`** retrieves the permanent seats and their categories.
+
+### 3. Create a show
+
+**`POST /api/shows/`**
 
 ```json
 {
@@ -112,18 +92,74 @@ Example show request:
 }
 ```
 
-Example show price request:
+The movie and screen must belong to the Tenant Admin's cinema. The screen must have a configured layout. The end time must follow the start time, and overlapping shows on the same screen and date are rejected.
+
+**`GET /api/shows/`** lists the Tenant Admin's shows. **`GET /api/shows/{show_id}/`** retrieves one show.
+
+### 4. Set or update prices for that show
+
+**`PUT /api/shows/{show_id}/prices/`**
 
 ```json
 {
   "prices": [
     {"seat_type": "NORMAL", "price": "190.00"},
     {"seat_type": "GOLD", "price": "250.00"},
-    {"seat_type": "PREMIUM", "price": "300.00"}
+    {"seat_type": "PREMIUM", "price": "300.00"},
+    {"seat_type": "RECLINER", "price": "575.00"}
   ]
 }
 ```
 
-## 8. Automated checks
+Include exactly one positive price for each seat type present on the screen. The price set belongs to the show: another show on the same screen can use different prices. `PUT` replaces the full price set.
 
-Automated API tests cover account registration, sign-in, cinema registration, movie access and validation, role-based visibility, create/update/delete access, and approval/rejection permissions.
+**`GET /api/shows/{show_id}/prices/`** retrieves the configured prices.
+
+### 5. Retrieve seats with show prices
+
+**`GET /api/shows/{show_id}/seats/`** returns the screen's permanent seat records with the matching seat-type price and `is_available` flag for that show. A regular User must pass `?cinema_slug=<slug>`; the Tenant Admin uses the cinema derived from their JWT. The response is only visible to customers for active cinemas and active movies.
+
+## Booking management
+
+Only authenticated regular Users can book, list, view, or cancel bookings. Customer requests select a cinema by its public `cinema_slug`; PostgreSQL schema names are never accepted from the customer.
+
+| Method | Endpoint | Behavior |
+|---|---|---|
+| `POST` | `/api/bookings/` | Create a confirmed booking for selected seats |
+| `GET` | `/api/bookings/my/` | List the authenticated customer's bookings |
+| `GET` | `/api/bookings/{booking_uuid}/` | Retrieve one of the customer's bookings |
+| `POST` | `/api/bookings/{booking_uuid}/cancel/` | Cancel before show start; seats become available again |
+
+Example create request:
+
+```json
+{
+  "cinema_slug": "example-cinema",
+  "show": 42,
+  "seats": [101, 102]
+}
+```
+
+The API validates that the cinema and movie are active, the show has not started, and every selected seat belongs to the show's screen. It calculates the total from that show's `ShowSeatPrice` records; clients cannot submit prices. Each booking seat stores `price_at_booking`, preserving the charged price if show prices are later changed.
+
+The booking transaction locks the show and selected seats, and a database uniqueness constraint prevents an active duplicate reservation for the same seat and show. Thus one physical seat can be booked for different showtimes, but not twice for the same show. A successful response includes a UUID booking ID, human-readable booking reference, confirmed status, price snapshots, and total amount.
+
+Cancelled bookings remain in the customer's history and retain their price snapshots; their seats can be booked again. Cancellation is rejected after the show starts. The booking reference is the confirmation identifier; payment and downloadable ticket generation are not implemented.
+
+## Tenant isolation and current limitations
+
+- Cinema, account, and tenant registry data are in the shared `public` schema.
+- Movie, screen, seat, show, and show-price rows are stored in the cinema's PostgreSQL schema.
+- Screen, seat, show, and pricing views derive the cinema/schema from the authenticated Tenant Admin. The client cannot select a schema through a body field or header.
+- Movie creation still uses the checked `X-Schema-Name` header described above.
+- There is no individual seat update endpoint; the layout is intentionally immutable through the current API.
+- Customer booking requests identify a cinema using its public slug, never its PostgreSQL schema name. Booking reads and operations locate tenant-local records without trusting a client-supplied schema.
+- Booking seat availability is per show. An active seat can only be booked once for a particular show, while the same screen seat remains bookable for another show.
+- Booking totals are calculated server-side from the selected show's category prices. Each booking seat stores a price snapshot so later price updates do not change past bookings.
+- Cancellation before the show starts releases seats while retaining the cancelled booking and price history.
+- Screens, movies, and cinemas that have booking history are protected from deletion; those delete requests return `409 Conflict`.
+- Cinema/movie/show discovery, payment processing, and downloadable ticket generation are not implemented. The booking reference is the confirmation identifier for now.
+
+## Automated checks
+
+The automated test suite covers authentication, cinema registration and access, movie permissions and validation, permanent seat-layout generation, screen capacity checks, show-specific prices, same-cinema validation, show overlap validation, tenant schema selection, and Tenant Admin-only access.

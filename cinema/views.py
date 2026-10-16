@@ -1,10 +1,13 @@
+from django.db.models.deletion import ProtectedError
 from rest_framework import generics, status
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from authentication.models import User
 from authentication.permissions import IsSuperAdmin
+from movies.schema import ensure_movie_table
 from .models import Cinema
 from .permissions import (
     CinemaListCreatePermission,
@@ -16,6 +19,12 @@ from .serializers import (
     CinemaSerializer,
     CinemaUpdateSerializer,
 )
+
+
+class BookingHistoryConflict(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "This cinema cannot be deleted while it has booking history."
+    default_code = "booking_history_protected"
 
 
 class CinemaRegistrationView(generics.CreateAPIView):
@@ -56,6 +65,13 @@ class CinemaDetailView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method in ("PUT", "PATCH"):
             return CinemaUpdateSerializer
         return CinemaSerializer
+
+    def perform_destroy(self, instance):
+        ensure_movie_table(instance.schema_name)
+        try:
+            instance.delete()
+        except ProtectedError as error:
+            raise BookingHistoryConflict() from error
 
 
 class CinemaApproveView(APIView):
