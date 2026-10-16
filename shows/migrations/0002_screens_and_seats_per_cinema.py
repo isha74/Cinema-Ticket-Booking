@@ -35,6 +35,12 @@ def reset_sequence(connection, schema_name, table_name):
         )
 
 
+def flush_deferred_constraints(connection):
+    with connection.cursor() as cursor:
+        cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        cursor.execute("SET CONSTRAINTS ALL DEFERRED")
+
+
 def set_cinema_foreign_key_delete_action(connection, schema_name, delete_action):
     quoted_schema = connection.ops.quote_name(schema_name)
     quoted_table = connection.ops.quote_name("shows_screen")
@@ -94,7 +100,8 @@ def forwards(apps, schema_editor):
         original_search_path = cursor.fetchone()[0]
 
     try:
-        for cinema in Cinema.objects.using(connection.alias).iterator():
+        cinemas = list(Cinema.objects.using(connection.alias).all())
+        for cinema in cinemas:
             quoted_schema = connection.ops.quote_name(cinema.schema_name)
             with connection.cursor() as cursor:
                 cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema}")
@@ -137,6 +144,7 @@ def forwards(apps, schema_editor):
 
             reset_sequence(connection, cinema.schema_name, "shows_screen")
             reset_sequence(connection, cinema.schema_name, "shows_seat")
+            flush_deferred_constraints(connection)
             set_cinema_foreign_key_delete_action(
                 connection,
                 cinema.schema_name,
@@ -144,6 +152,7 @@ def forwards(apps, schema_editor):
             )
 
         set_search_path(connection, "public")
+        flush_deferred_constraints(connection)
         with connection.schema_editor() as public_editor:
             public_editor.delete_model(Seat)
             public_editor.delete_model(Screen)
@@ -170,7 +179,8 @@ def backwards(apps, schema_editor):
         original_search_path = cursor.fetchone()[0]
 
     try:
-        for cinema in Cinema.objects.using(connection.alias).iterator():
+        cinemas = list(Cinema.objects.using(connection.alias).all())
+        for cinema in cinemas:
             if not table_exists(connection, cinema.schema_name, "shows_screen"):
                 continue
             set_search_path(connection, cinema.schema_name)
@@ -232,9 +242,12 @@ def backwards(apps, schema_editor):
 
         reset_sequence(connection, "public", "shows_screen")
         reset_sequence(connection, "public", "shows_seat")
+        flush_deferred_constraints(connection)
         set_cinema_foreign_key_delete_action(connection, "public", "CASCADE")
 
-        for cinema in Cinema.objects.using(connection.alias).iterator():
+        cinemas = list(Cinema.objects.using(connection.alias).all())
+        flush_deferred_constraints(connection)
+        for cinema in cinemas:
             if not table_exists(connection, cinema.schema_name, "shows_screen"):
                 continue
             set_search_path(connection, cinema.schema_name)

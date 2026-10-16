@@ -6,14 +6,17 @@ from cinema.schema import cinema_schema
 def ensure_movie_table(schema_name):
     table_exists = movie_table_exists(schema_name)
 
-    if table_exists:
-        return
+    if not table_exists:
+        from .models import Movie
 
-    from .models import Movie
+        with cinema_schema(schema_name):
+            with connection.schema_editor() as schema_editor:
+                schema_editor.create_model(Movie)
 
-    with cinema_schema(schema_name):
-        with connection.schema_editor() as schema_editor:
-            schema_editor.create_model(Movie)
+    from shows.schema import ensure_screen_tables, ensure_show_tables
+
+    ensure_screen_tables(schema_name)
+    ensure_show_tables(schema_name)
 
 
 def movie_table_exists(schema_name):

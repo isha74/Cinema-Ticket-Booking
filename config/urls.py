@@ -17,6 +17,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+from shows.views import (
+    ScreenDetailView,
+    ScreenListCreateView,
+)
+
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -24,6 +29,8 @@ urlpatterns = [
     path("api/auth/", include("authentication.urls")),
     path("api/cinemas/", include("cinema.urls")),
     path("api/movies/", include("movies.urls")),
-    path("api/screens/", include("shows.urls")),
+    path("api/shows/", include("shows.urls")),
+    path("api/screens/", ScreenListCreateView.as_view(), name="legacy-screen-list-create"),
+    path("api/screens/<int:pk>/", ScreenDetailView.as_view(), name="legacy-screen-detail"),
 
 ]

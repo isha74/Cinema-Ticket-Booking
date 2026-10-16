@@ -1,10 +1,14 @@
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from cinema.models import Cinema
+from movies.models import Movie
+from movies.schema import ensure_movie_table
 
-from .models import Screen
+from .models import Screen, Seat, Show, ShowSeatPrice
 from .schema import cinema_schema, ensure_screen_tables
 
 
@@ -12,203 +16,258 @@ User = get_user_model()
 
 
 @override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
-class ScreenAPITests(TestCase):
+class ShowWorkflowAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.tenant_admin = self.create_user("screenowner", User.Role.TENANT_ADMIN)
-        self.other_tenant_admin = self.create_user("otherowner", User.Role.TENANT_ADMIN)
+        self.tenant_admin = User.objects.create_user(
+            username="showowner",
+            email="showowner@example.com",
+            password="test-password-123",
+            role=User.Role.TENANT_ADMIN,
+        )
+        self.other_tenant_admin = User.objects.create_user(
+            username="otherowner",
+            email="otherowner@example.com",
+            password="test-password-123",
+            role=User.Role.TENANT_ADMIN,
+        )
         self.super_admin = User.objects.create_superuser(
             username="platformadmin",
             email="platformadmin@example.com",
-            password="Cinema-Password-42!",
+            password="test-password-123",
         )
-        self.user = self.create_user("moviegoer", User.Role.USER)
-        self.cinema = self.create_cinema("Owner Cinema", self.tenant_admin)
+        self.user = User.objects.create_user(
+            username="customer",
+            email="customer@example.com",
+            password="test-password-123",
+            role=User.Role.USER,
+        )
+        self.cinema = self.create_cinema("Main Cinema", self.tenant_admin)
         self.other_cinema = self.create_cinema(
             "Other Cinema",
             self.other_tenant_admin,
         )
-        self.pending_cinema = self.create_cinema(
-            "Pending Cinema",
-            self.create_user("pendingowner", User.Role.TENANT_ADMIN),
-            Cinema.Status.PENDING,
-        )
+        ensure_screen_tables(self.cinema.schema_name)
+        ensure_screen_tables(self.other_cinema.schema_name)
+        ensure_movie_table(self.cinema.schema_name)
+        ensure_movie_table(self.other_cinema.schema_name)
         with cinema_schema(self.cinema.schema_name):
-            self.own_screen = Screen.objects.create(
+            self.screen = Screen.objects.create(
                 cinema=self.cinema,
                 name="Screen 1",
-                total_seats=100,
+                total_seats=4,
+            )
+            self.movie = Movie.objects.create(
+                cinema=self.cinema,
+                title="Example Movie",
+                duration=120,
+                language="English",
+                genre="Drama",
+                release_date="2026-01-01",
+                status=Movie.Status.ACTIVE,
             )
         with cinema_schema(self.other_cinema.schema_name):
             self.other_screen = Screen.objects.create(
+                id=999,
                 cinema=self.other_cinema,
-                name="Screen 1",
-                total_seats=80,
+                name="Other Screen",
+                total_seats=4,
             )
-        with cinema_schema(self.pending_cinema.schema_name):
-            Screen.objects.create(
-                cinema=self.pending_cinema,
-                name="Pending Screen",
-                total_seats=40,
+            self.other_movie = Movie.objects.create(
+                id=999,
+                cinema=self.other_cinema,
+                title="Other Movie",
+                duration=100,
+                language="English",
+                genre="Drama",
+                release_date="2026-01-01",
+                status=Movie.Status.ACTIVE,
             )
+        self.client.force_authenticate(self.tenant_admin)
 
-    def create_user(self, username, role):
-        return User.objects.create_user(
-            username=username,
-            email=f"{username}@example.com",
-            password="Cinema-Password-42!",
-            role=role,
-        )
-
-    def create_cinema(self, name, owner, status=Cinema.Status.ACTIVE):
+    def create_cinema(self, name, owner):
         slug = name.lower().replace(" ", "-")
-        cinema = Cinema.objects.create(
+        return Cinema.objects.create(
             name=name,
             domain=f"{slug}.example.com",
             slug=slug,
             schema_name=slug.replace("-", "_"),
             owner=owner,
-            status=status,
+            status=Cinema.Status.ACTIVE,
         )
-        ensure_screen_tables(cinema.schema_name)
-        return cinema
 
-    def test_tenant_admin_creates_screen_for_own_cinema_without_sending_cinema_id(self):
-        self.client.force_authenticate(self.tenant_admin)
-
-        response = self.client.post(
-            "/api/screens/",
-            {"name": "Screen 2", "total_seats": 120},
+    def configure_layout(self, screen=None):
+        screen = screen or self.screen
+        return self.client.post(
+            f"/api/shows/screens/{screen.pk}/configure-layout/",
+            {
+                "rows": [
+                    {
+                        "label": "A",
+                        "seat_count": 2,
+                        "seat_type": "NORMAL",
+                        "gaps_after": [1],
+                    },
+                    {"label": "B", "seat_count": 2, "seat_type": "GOLD"},
+                ]
+            },
             format="json",
-            HTTP_X_SCHEMA_NAME=self.cinema.schema_name,
         )
+
+    def create_show(self, *, start="14:00:00", end="16:00:00", movie=None):
+        return self.client.post(
+            "/api/shows/",
+            {
+                "movie": (movie or self.movie).pk,
+                "screen": self.screen.pk,
+                "show_date": "2026-10-20",
+                "start_time": start,
+                "end_time": end,
+            },
+            format="json",
+        )
+
+    def test_configures_permanent_layout_and_rejects_reconfiguration(self):
+        response = self.configure_layout()
+        repeat_response = self.configure_layout()
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["cinema"], self.cinema.pk)
-        self.assertEqual(response.data["name"], "Screen 2")
-        self.assertEqual(response.data["total_seats"], 120)
-
-    def test_tenant_admin_can_list_only_own_screens(self):
-        self.client.force_authenticate(self.tenant_admin)
-
-        response = self.client.get(
-            "/api/screens/",
-            HTTP_X_SCHEMA_NAME=self.cinema.schema_name,
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual([screen["id"] for screen in response.data], [self.own_screen.pk])
-
-    def test_tenant_admin_can_update_and_delete_own_screen(self):
-        self.client.force_authenticate(self.tenant_admin)
-
-        update_response = self.client.patch(
-            f"/api/screens/{self.own_screen.pk}/",
-            {"total_seats": 110},
-            format="json",
-            HTTP_X_SCHEMA_NAME=self.cinema.schema_name,
-        )
-        delete_response = self.client.delete(
-            f"/api/screens/{self.own_screen.pk}/",
-            HTTP_X_SCHEMA_NAME=self.cinema.schema_name,
-        )
-
-        self.assertEqual(update_response.status_code, 200)
-        self.assertEqual(update_response.data["total_seats"], 110)
-        self.assertEqual(delete_response.status_code, 204)
+        self.assertEqual(response.data["seat_count"], self.screen.total_seats)
+        self.assertEqual(len(response.data["seats"]), 4)
+        self.assertEqual(response.data["seats"][1]["position"], 3)
+        self.assertEqual(response.data["seats"][2]["seat_type"], "GOLD")
+        self.assertEqual(repeat_response.status_code, 409)
         with cinema_schema(self.cinema.schema_name):
-            self.assertFalse(Screen.objects.filter(pk=self.own_screen.pk).exists())
+            self.assertEqual(Seat.objects.filter(screen=self.screen).count(), 4)
 
-    def test_tenant_admin_cannot_access_or_manage_another_cinemas_screen(self):
-        self.client.force_authenticate(self.tenant_admin)
-
-        detail_response = self.client.get(
-            f"/api/screens/{self.other_screen.pk}/",
-            HTTP_X_SCHEMA_NAME=self.other_cinema.schema_name,
-        )
-        update_response = self.client.patch(
-            f"/api/screens/{self.other_screen.pk}/",
-            {"name": "Not allowed"},
-            format="json",
-            HTTP_X_SCHEMA_NAME=self.other_cinema.schema_name,
-        )
-        delete_response = self.client.delete(
-            f"/api/screens/{self.other_screen.pk}/",
-            HTTP_X_SCHEMA_NAME=self.other_cinema.schema_name,
-        )
-
-        self.assertEqual(detail_response.status_code, 403)
-        self.assertEqual(update_response.status_code, 403)
-        self.assertEqual(delete_response.status_code, 403)
-
-    def test_super_admin_can_view_but_not_change_screens(self):
-        self.client.force_authenticate(self.super_admin)
-
-        list_response = self.client.get("/api/screens/")
-        update_response = self.client.patch(
-            f"/api/screens/{self.own_screen.pk}/",
-            {"name": "Changed"},
-            format="json",
-            HTTP_X_SCHEMA_NAME=self.cinema.schema_name,
-        )
-
-        self.assertEqual(list_response.status_code, 200)
-        self.assertEqual(len(list_response.data), 3)
-        self.assertEqual(update_response.status_code, 403)
-
-    def test_regular_users_only_see_screens_for_active_cinemas(self):
-        self.client.force_authenticate(self.user)
-
-        response = self.client.get("/api/screens/")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 2)
-        self.assertNotIn(
-            self.pending_cinema.pk,
-            {screen["cinema"] for screen in response.data},
-        )
-
-    def test_screen_requires_positive_seat_count(self):
-        self.client.force_authenticate(self.tenant_admin)
-
+    def test_layout_requires_exact_capacity(self):
         response = self.client.post(
-            "/api/screens/",
-            {"name": "Invalid Screen", "total_seats": 0},
+            f"/api/shows/screens/{self.screen.pk}/configure-layout/",
+            {
+                "rows": [
+                    {"label": "A", "seat_count": 3, "seat_type": "NORMAL"},
+                ]
+            },
             format="json",
-            HTTP_X_SCHEMA_NAME=self.cinema.schema_name,
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("total_seats", response.data)
+        with cinema_schema(self.cinema.schema_name):
+            self.assertFalse(Seat.objects.filter(screen=self.screen).exists())
 
-    def test_tenant_admin_must_select_their_cinema_schema(self):
-        self.client.force_authenticate(self.tenant_admin)
+    def test_show_and_prices_are_show_specific(self):
+        self.configure_layout()
+        afternoon = self.create_show()
+        evening = self.create_show(start="18:00:00", end="20:00:00")
 
-        missing_header_response = self.client.get("/api/screens/")
-        missing_create_header_response = self.client.post(
-            "/api/screens/",
-            {"name": "Missing Schema Screen", "total_seats": 50},
+        self.assertEqual(afternoon.status_code, 201)
+        self.assertEqual(evening.status_code, 201)
+        afternoon_id = afternoon.data["id"]
+        evening_id = evening.data["id"]
+
+        afternoon_prices = self.client.put(
+            f"/api/shows/{afternoon_id}/prices/",
+            {
+                "prices": [
+                    {"seat_type": "NORMAL", "price": "150.00"},
+                    {"seat_type": "GOLD", "price": "200.00"},
+                ]
+            },
             format="json",
         )
-        other_schema_response = self.client.post(
-            "/api/screens/",
-            {"name": "Wrong Cinema Screen", "total_seats": 50},
+        evening_prices = self.client.put(
+            f"/api/shows/{evening_id}/prices/",
+            {
+                "prices": [
+                    {"seat_type": "NORMAL", "price": "190.00"},
+                    {"seat_type": "GOLD", "price": "250.00"},
+                ]
+            },
             format="json",
+        )
+
+        self.assertEqual(afternoon_prices.status_code, 200)
+        self.assertEqual(evening_prices.status_code, 200)
+        afternoon_seats = self.client.get(f"/api/shows/{afternoon_id}/seats/")
+        evening_seats = self.client.get(f"/api/shows/{evening_id}/seats/")
+        self.assertEqual(afternoon_seats.status_code, 200)
+        self.assertEqual(evening_seats.status_code, 200)
+        self.assertEqual(
+            {seat["price"] for seat in afternoon_seats.data},
+            {Decimal("150.00"), Decimal("200.00")},
+        )
+        self.assertEqual(
+            {seat["price"] for seat in evening_seats.data},
+            {Decimal("190.00"), Decimal("250.00")},
+        )
+        with cinema_schema(self.cinema.schema_name):
+            self.assertEqual(Seat.objects.filter(screen=self.screen).count(), 4)
+            self.assertEqual(Show.objects.filter(screen=self.screen).count(), 2)
+            self.assertEqual(ShowSeatPrice.objects.count(), 4)
+
+    def test_show_requires_own_movie_screen_and_configured_layout(self):
+        missing_layout_response = self.create_show()
+        self.configure_layout()
+        foreign_movie_response = self.create_show(movie=self.other_movie)
+        foreign_screen_response = self.client.post(
+            "/api/shows/",
+            {
+                "movie": self.movie.pk,
+                "screen": self.other_screen.pk,
+                "show_date": "2026-10-20",
+                "start_time": "14:00:00",
+                "end_time": "16:00:00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(missing_layout_response.status_code, 400)
+        self.assertEqual(foreign_movie_response.status_code, 400)
+        self.assertEqual(foreign_screen_response.status_code, 400)
+
+    def test_show_rejects_overlapping_schedule(self):
+        self.configure_layout()
+        first = self.create_show()
+        overlap = self.create_show(start="15:30:00", end="17:00:00")
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(overlap.status_code, 400)
+
+    def test_show_prices_must_cover_each_category_exactly_once(self):
+        self.configure_layout()
+        show = self.create_show()
+        response = self.client.put(
+            f"/api/shows/{show.data['id']}/prices/",
+            {"prices": [{"seat_type": "NORMAL", "price": "190.00"}]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_tenant_is_derived_from_authenticated_user_not_request_schema(self):
+        self.configure_layout()
+        response = self.client.get(
+            "/api/shows/screens/",
             HTTP_X_SCHEMA_NAME=self.other_cinema.schema_name,
         )
 
-        self.assertEqual(missing_header_response.status_code, 400)
-        self.assertIn("X-Schema-Name", missing_header_response.data)
-        self.assertEqual(missing_create_header_response.status_code, 400)
-        self.assertIn("X-Schema-Name", missing_create_header_response.data)
-        self.assertEqual(other_schema_response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([screen["id"] for screen in response.data], [self.screen.pk])
 
-    def test_deleting_cinema_cleans_its_screens(self):
-        cinema_schema_name = self.cinema.schema_name
-
-        self.cinema.delete()
-
-        with cinema_schema(cinema_schema_name):
-            self.assertFalse(
-                Screen.objects.filter(cinema_id=self.cinema.pk).exists()
-            )
+    def test_only_tenant_admin_can_use_show_and_layout_apis(self):
+        paths = (
+            ("/api/shows/screens/", "get"),
+            (f"/api/shows/screens/{self.screen.pk}/configure-layout/", "post"),
+            ("/api/shows/", "get"),
+            ("/api/shows/", "post"),
+        )
+        for user in (self.super_admin, self.user):
+            self.client.force_authenticate(user)
+            for path, method in paths:
+                with self.subTest(user=user.username, path=path):
+                    response = getattr(self.client, method)(
+                        path,
+                        data={} if method == "post" else None,
+                        format="json" if method == "post" else None,
+                    )
+                    self.assertEqual(response.status_code, 403)

@@ -2,9 +2,9 @@
 
 ## What this project is
 
-This project is the foundation of a cinema booking system. It currently provides APIs for user accounts, sign-in, cinema registration and management, cinema approval, movie catalogues, and screen management.
+This project is the foundation of a cinema booking system. It currently provides APIs for user accounts, sign-in, cinema registration and management, cinema approval, movie catalogues, permanent screen and seat layouts, show scheduling, and show-specific seat pricing.
 
-**Important:** Individual seat setup, showtimes, seat selection, ticket booking, and payments are not implemented yet. Those would be later features.
+**Important:** Seat selection, ticket booking, and payments are not implemented yet.
 
 ## Who can use it
 
@@ -113,31 +113,40 @@ The movie API prefix is `/api/movies/`. For movie registration, the Tenant Admin
 | Update a movie | `PUT` or `PATCH /api/movies/{id}/` | Its Tenant Admin |
 | Delete a movie | `DELETE /api/movies/{id}/` | Its Tenant Admin |
 
-### Screen APIs
+### Screen and seat APIs
 
-Tenant Admin screen requests must include `X-Schema-Name` with their cinema's schema; the API checks that it belongs to the authenticated account. Super Admins and regular users can omit the header when listing all screens visible to them. Detail requests require the header to identify the cinema schema. The body does not contain a cinema ID.
+All screen and seat APIs require a Tenant Admin access token. The cinema and PostgreSQL schema are derived from the authenticated user's assigned cinema. Do not provide a tenant schema in a request header or body. Super Admins and regular users cannot use these APIs.
 
 The screen API prefix is `/api/screens/`. Protected requests require a Bearer access token. Creating a screen uses the signed-in Tenant Admin's cinema automatically.
 
 | Action | Method and path | Access |
 |---|---|---|
-| Create a screen | `POST /api/screens/` | Tenant Admin; must send its `X-Schema-Name` |
-| List screens | `GET /api/screens/` | Signed-in user; Tenant Admin must send its `X-Schema-Name`; others may filter with it |
-| View one screen | `GET /api/screens/{id}/` | Super Admin, its Tenant Admin, or a User if the cinema is Active; send `X-Schema-Name` |
-| Update a screen | `PUT` or `PATCH /api/screens/{id}/` | Its Tenant Admin; send its `X-Schema-Name` |
-| Delete a screen | `DELETE /api/screens/{id}/` | Its Tenant Admin; send its `X-Schema-Name` |
+| Create a screen | `POST /api/shows/screens/` | Tenant Admin; body includes `name` and `total_seats` |
+| List screens | `GET /api/shows/screens/` | Tenant Admin; lists their own screens |
+| Configure permanent seat layout | `POST /api/shows/screens/{id}/configure-layout/` | Tenant Admin; generates rows, seat numbers, categories, and aisle gaps once |
+| List screen seats | `GET /api/shows/screens/{id}/seats/` | Tenant Admin |
+| Create a show | `POST /api/shows/` | Tenant Admin; body includes movie, screen, date, start, and end time |
+| List shows | `GET /api/shows/` | Tenant Admin |
+| View a show | `GET /api/shows/{id}/` | Tenant Admin |
+| Set or change a show's prices | `PUT /api/shows/{id}/prices/` | Tenant Admin; one price per seat category |
+| Get a show's prices | `GET /api/shows/{id}/prices/` | Tenant Admin |
+| Get seats with show prices | `GET /api/shows/{id}/seats/` | Tenant Admin |
+
+Layout rows specify a row `label`, `seat_count`, `seat_type`, and optional `gaps_after` seat numbers to leave aisle spaces. The sum of row seat counts must match the screen capacity, and generated seat numbers must be unique. Supported types are `NORMAL`, `GOLD`, `PREMIUM`, and `RECLINER`. Layouts are permanent; a configured layout cannot be replaced.
+
+Show creation requires `movie`, `screen`, `show_date`, `start_time`, and `end_time`; the movie and screen must belong to the authenticated Tenant Admin's cinema, and the screen must already have a layout. `PUT /api/shows/{id}/prices/` accepts a `prices` array with one positive amount for each category used by that screen. Prices belong to a show, so shows on the same screen can charge different amounts without changing the seats.
 
 ## Main project folders
 
 - `authentication/` contains user roles, account APIs, permissions, and authentication tests.
 - `cinema/` contains the cinema record, cinema APIs, permissions, approval actions, and cinema tests.
 - `movies/` contains cinema movie records, movie APIs, permissions, admin setup, and movie tests.
-- `shows/` currently contains Screen and Seat models, screen APIs, and screen tests. Show scheduling is not implemented yet.
+- `shows/` contains Screen, Seat, Show, and ShowSeatPrice models; tenant-scoped screen, layout, show, and pricing APIs; and tests.
 - `config/` contains the Django project settings and the main URL routing.
 - `docs/` contains the project notes and implementation record.
 
 ## What could be added next
 
-The project currently handles cinema setup, movie catalogues, screen setup, and access control. Possible next steps are individual seat setup, show scheduling, bookings, ticket confirmation, and payment handling.
+The project currently handles cinema setup, movie catalogues, permanent seat layouts, show schedules, show-specific pricing, and access control. Possible next steps are seat bookings, ticket confirmation, and payment handling.
 
 See [IMPLEMENTED_FEATURES.md](./IMPLEMENTED_FEATURES.md) for a shorter, step-by-step record of the features implemented.

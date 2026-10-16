@@ -81,9 +81,48 @@ Movies are stored in the linked cinema's PostgreSQL schema. Each movie has a tit
 
 ## 7. Screen setup
 
-Screen and Seat tables are stored in each cinema's PostgreSQL schema. Screen requests use the `X-Schema-Name` header; the API validates that the selected schema belongs to the signed-in Tenant Admin (or is otherwise visible to the requesting role). The cinema is assigned from the selected schema and is never accepted from the request body. Creating or listing a screen provisions that cinema's Screen and Seat tables when needed. Existing Screen and Seat rows are moved from `public` into their cinema's schema by the shows migration.
+Screen, Seat, Show, and show-specific seat-price tables are stored in each cinema's PostgreSQL schema. All screen, layout, show, and price APIs require a Tenant Admin access token. The server derives the cinema and schema from the authenticated Tenant Admin's cinema record; do not send a schema in the body or an `X-Schema-Name` header.
 
-Tenant Admins can create, view, update, and delete screens for their own cinema. Each screen has a name and total seat count. Super Admins can view screens; regular users can view screens in active cinemas. The Seat model is present in each cinema schema, but individual seat APIs and Show scheduling are the next steps. For Tenant Admin screen requests, send `X-Schema-Name: <your cinema schema>` alongside the access token.
+| Action | API | Description |
+|---|---|---|
+| Create a screen | `POST /api/shows/screens/` | Body: `name`, `total_seats`; cinema is assigned from the authenticated account |
+| List screens | `GET /api/shows/screens/` | Lists the signed-in Tenant Admin's screens |
+| Configure a permanent screen layout | `POST /api/shows/screens/{id}/configure-layout/` | Generates seats once with row, number, type, and gap positions |
+| Retrieve seats in a screen | `GET /api/shows/screens/{id}/seats/` | Returns the permanent screen layout |
+| Create a show | `POST /api/shows/` | Links a same-cinema movie and configured screen with a date and start/end times |
+| List shows | `GET /api/shows/` | Lists shows for the signed-in Tenant Admin's cinema |
+| View a show | `GET /api/shows/{id}/` | Returns scheduled show details |
+| Set or change prices for a show | `PUT /api/shows/{id}/prices/` | Replaces the prices for all seat categories used by that screen |
+| Retrieve show prices | `GET /api/shows/{id}/prices/` | Returns that show's category prices |
+| Retrieve seats with a show's prices | `GET /api/shows/{id}/seats/` | Returns permanent seats with prices from the selected show |
+
+Layout requests include a `rows` array with each row's `label`, `seat_count`, and `seat_type`; optional `gaps_after` values insert aisle gaps after the specified seat positions. Supported types are `NORMAL`, `GOLD`, `PREMIUM`, and `RECLINER`. The generated seat count must equal the screen capacity, and duplicate row labels and seat numbers are rejected. The layout can only be configured once; subsequent attempts to change it are rejected.
+
+Show requests include `movie`, `screen`, `show_date`, `start_time`, and `end_time`. The API rejects movies or screens from another cinema and overlapping shows on the same screen. Price requests contain a `prices` array with exactly one positive price for every seat category on the screen. Seats are not modified when show-specific prices change.
+
+Example show request:
+
+```json
+{
+  "movie": 12,
+  "screen": 3,
+  "show_date": "2026-10-20",
+  "start_time": "14:00:00",
+  "end_time": "16:00:00"
+}
+```
+
+Example show price request:
+
+```json
+{
+  "prices": [
+    {"seat_type": "NORMAL", "price": "190.00"},
+    {"seat_type": "GOLD", "price": "250.00"},
+    {"seat_type": "PREMIUM", "price": "300.00"}
+  ]
+}
+```
 
 ## 8. Automated checks
 
