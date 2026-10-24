@@ -34,4 +34,5 @@ urlpatterns = [
     path("api/screens/", ScreenListCreateView.as_view(), name="legacy-screen-list-create"),
     path("api/screens/<int:pk>/", ScreenDetailView.as_view(), name="legacy-screen-detail"),
 
+
 ]
