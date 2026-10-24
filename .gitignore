@@ -6,3 +6,4 @@ myenv/
 __pycache__/
 *.pyc
 ui-mockups
+media/

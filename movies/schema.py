@@ -16,6 +16,24 @@ def ensure_movie_table(schema_name):
         with cinema_schema(schema_name):
             with connection.schema_editor() as schema_editor:
                 schema_editor.create_model(Movie)
+    else:
+        from .models import Movie
+
+        with cinema_schema(schema_name):
+            with connection.cursor() as cursor:
+                columns = {
+                    column.name
+                    for column in connection.introspection.get_table_description(
+                        cursor,
+                        Movie._meta.db_table,
+                    )
+                }
+            if "poster" not in columns:
+                with connection.schema_editor() as schema_editor:
+                    schema_editor.add_field(
+                        Movie,
+                        Movie._meta.get_field("poster"),
+                    )
 
     ensure_show_tables(schema_name)
     from bookings.schema import ensure_booking_tables

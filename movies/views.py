@@ -70,7 +70,13 @@ class MovieListCreateView(APIView):
                     and not is_super_admin(request.user)
                 ):
                     movies = movies.filter(status=Movie.Status.ACTIVE)
-                results.extend(MovieSerializer(movies, many=True).data)
+                results.extend(
+                    MovieSerializer(
+                        movies,
+                        many=True,
+                        context={"request": request},
+                    ).data
+                )
         return Response(results)
 
     def post(self, request):

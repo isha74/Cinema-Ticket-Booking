@@ -1,8 +1,14 @@
 from datetime import date
+from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from urllib.parse import urlparse
 
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase, override_settings
+from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image
 from rest_framework.test import APIClient
 
 from cinema.models import Cinema
@@ -238,6 +244,52 @@ class MovieAPITests(TestCase):
         self.assertEqual(update_response.status_code, 200)
         self.assertEqual(update_response.data["duration"], 130)
         self.assertEqual(update_response.data["status"], Movie.Status.ACTIVE)
+
+    def test_tenant_admin_can_upload_movie_poster(self):
+        image = BytesIO()
+        Image.new("RGB", (2, 2), color="purple").save(image, format="PNG")
+        image.seek(0)
+        poster = SimpleUploadedFile(
+            "poster.png",
+            image.read(),
+            content_type="image/png",
+        )
+        self.client.force_authenticate(self.tenant_admin)
+
+        with TemporaryDirectory() as media_root, override_settings(
+            MEDIA_ROOT=media_root,
+        ):
+            response = self.client.post(
+                "/api/movies/",
+                {**self.movie_payload(title="Movie with poster"), "poster": poster},
+                format="multipart",
+                HTTP_X_SCHEMA_NAME=self.cinema.schema_name,
+            )
+
+            self.assertEqual(response.status_code, 201)
+            self.assertIn("/media/movie-posters/", response.data["poster"])
+            relative_path = urlparse(response.data["poster"]).path.removeprefix(
+                "/media/"
+            )
+            self.assertTrue((Path(media_root) / relative_path).is_file())
+
+    def test_movie_poster_must_be_an_image(self):
+        poster = SimpleUploadedFile(
+            "not-an-image.png",
+            b"not an image",
+            content_type="image/png",
+        )
+        self.client.force_authenticate(self.tenant_admin)
+
+        response = self.client.post(
+            "/api/movies/",
+            {**self.movie_payload(), "poster": poster},
+            format="multipart",
+            HTTP_X_SCHEMA_NAME=self.cinema.schema_name,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("poster", response.data)
 
     def test_movie_ids_are_allocated_across_cinema_schemas(self):
         if connection.vendor != "postgresql":

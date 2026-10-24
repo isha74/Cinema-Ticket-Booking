@@ -1,6 +1,14 @@
+from pathlib import Path
+from uuid import uuid4
+
 from django.db import models
 
 from cinema.models import Cinema
+
+
+def movie_poster_upload_path(instance, filename):
+    extension = Path(filename).suffix.lower()
+    return f"movie-posters/{instance.cinema_id}/{uuid4().hex}{extension}"
 
 
 class Movie(models.Model):
@@ -20,6 +28,11 @@ class Movie(models.Model):
     language = models.CharField(max_length=100)
     genre = models.CharField(max_length=100)
     release_date = models.DateField()
+    poster = models.ImageField(
+        upload_to=movie_poster_upload_path,
+        blank=True,
+        null=True,
+    )
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
