@@ -1,10 +1,13 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import generics
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
+
+from cinema.models import Cinema
 
 from .models import User
 from .permissions import IsNormalUser, IsSuperAdmin, IsTenantAdmin
@@ -25,6 +28,29 @@ class RoleTokenObtainPairSerializer(TokenObtainPairSerializer):
         token = super().get_token(user)
         token["role"] = User.Role.SUPER_ADMIN if user.is_superuser else user.role
         return token
+
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        user = self.user
+
+        if user.role == User.Role.TENANT_ADMIN and not user.is_superuser:
+            try:
+                cinema_status = user.cinema.status
+            except Cinema.DoesNotExist:
+                raise AuthenticationFailed(
+                    "Your account is not assigned to a cinema."
+                )
+
+            if cinema_status == Cinema.Status.PENDING:
+                raise AuthenticationFailed(
+                    "Your cinema registration is awaiting admin approval."
+                )
+            if cinema_status != Cinema.Status.ACTIVE:
+                raise AuthenticationFailed(
+                    "Your cinema registration was rejected. Contact the administrator."
+                )
+
+        return data
 
 
 class LoginView(TokenObtainPairView):

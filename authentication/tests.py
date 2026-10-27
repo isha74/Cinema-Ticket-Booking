@@ -131,6 +131,14 @@ class AuthenticationAPITests(TestCase):
 		self.assertEqual(reject_response.data["status"], Cinema.Status.REJECTED)
 
 	def test_login_returns_tokens_with_role_claim(self):
+		Cinema.objects.create(
+			name="Approved Cinema",
+			domain="approved.example.com",
+			slug="approved-cinema",
+			schema_name="approved_cinema",
+			owner=self.tenant_admin,
+			status=Cinema.Status.ACTIVE,
+		)
 		response = self.client.post(
 			"/api/auth/login/",
 			{"username": self.tenant_admin.username, "password": self.password},
@@ -139,6 +147,55 @@ class AuthenticationAPITests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		token = AccessToken(response.data["access"])
 		self.assertEqual(token["role"], User.Role.TENANT_ADMIN)
+
+	def test_tenant_admin_cannot_login_until_cinema_is_approved(self):
+		cinema = Cinema.objects.create(
+			name="Pending Cinema",
+			domain="pending.example.com",
+			slug="pending-cinema",
+			schema_name="pending_cinema",
+			owner=self.tenant_admin,
+			status=Cinema.Status.PENDING,
+		)
+
+		response = self.client.post(
+			"/api/auth/login/",
+			{"username": self.tenant_admin.username, "password": self.password},
+		)
+		self.assertEqual(response.status_code, 401)
+		self.assertIn("awaiting admin approval", response.data["detail"])
+
+		self.client.force_authenticate(self.superadmin)
+		approve_response = self.client.post(
+			f"/api/cinemas/{cinema.pk}/approve/"
+		)
+		self.assertEqual(approve_response.status_code, 200)
+
+		self.client.force_authenticate(None)
+		response = self.client.post(
+			"/api/auth/login/",
+			{"username": self.tenant_admin.username, "password": self.password},
+		)
+		self.assertEqual(response.status_code, 200)
+		self.assertIn("access", response.data)
+
+	def test_tenant_admin_of_rejected_cinema_cannot_login(self):
+		Cinema.objects.create(
+			name="Rejected Cinema",
+			domain="rejected.example.com",
+			slug="rejected-cinema",
+			schema_name="rejected_cinema",
+			owner=self.tenant_admin,
+			status=Cinema.Status.REJECTED,
+		)
+
+		response = self.client.post(
+			"/api/auth/login/",
+			{"username": self.tenant_admin.username, "password": self.password},
+		)
+
+		self.assertEqual(response.status_code, 401)
+		self.assertIn("was rejected", response.data["detail"])
 
 	def test_superuser_is_created_with_superadmin_role(self):
 		self.assertEqual(self.superadmin.role, User.Role.SUPER_ADMIN)

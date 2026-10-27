@@ -28,10 +28,19 @@ class BookingSeatSerializer(serializers.ModelSerializer):
 
 class BookingSerializer(serializers.ModelSerializer):
     movie_title = serializers.CharField(source="show.movie.title", read_only=True)
+    movie_poster = serializers.ImageField(
+        source="show.movie.poster",
+        read_only=True,
+    )
     show_date = serializers.DateField(source="show.show_date", read_only=True)
     start_time = serializers.TimeField(source="show.start_time", read_only=True)
+    end_time = serializers.TimeField(source="show.end_time", read_only=True)
     screen_name = serializers.CharField(source="show.screen.name", read_only=True)
     cinema = serializers.CharField(source="show.screen.cinema.name", read_only=True)
+    cinema_slug = serializers.SlugField(
+        source="show.screen.cinema.slug",
+        read_only=True,
+    )
     seats = BookingSeatSerializer(source="booking_seats", many=True, read_only=True)
 
     class Meta:
@@ -40,15 +49,18 @@ class BookingSerializer(serializers.ModelSerializer):
             "id",
             "booking_reference",
             "cinema",
+            "cinema_slug",
             "movie_title",
+            "movie_poster",
             "show",
             "show_date",
             "start_time",
+            "end_time",
             "screen_name",
             "seats",
             "total_amount",
             "status",
+            "hold_expires_at",
             "created_at",
         )
         read_only_fields = fields
-

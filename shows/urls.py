@@ -5,6 +5,7 @@ from .views import (
     ScreenLayoutView,
     ScreenListCreateView,
     ScreenSeatListView,
+    CustomerShowDiscoveryView,
     ShowDetailView,
     ShowListCreateView,
     ShowSeatListView,
@@ -13,6 +14,7 @@ from .views import (
 
 
 urlpatterns = [
+    path("discover/", CustomerShowDiscoveryView.as_view(), name="show-discover"),
     path("", ShowListCreateView.as_view(), name="show-list-create"),
     path(
         "<int:show_id>/prices/",

@@ -1,7 +1,9 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from cinema.models import Cinema
@@ -39,6 +41,7 @@ class BookingAPITests(TestCase):
             owner=self.tenant_admin,
             status=Cinema.Status.ACTIVE,
         )
+        self.show_date = timezone.localdate() + timedelta(days=1)
         ensure_movie_table(self.cinema.schema_name)
         with cinema_schema(self.cinema.schema_name):
             self.screen = Screen.objects.create(
@@ -68,7 +71,7 @@ class BookingAPITests(TestCase):
             self.show = Show.objects.create(
                 movie=self.movie,
                 screen=self.screen,
-                show_date="2026-10-20",
+                show_date=self.show_date,
                 start_time="14:00:00",
                 end_time="16:00:00",
             )
@@ -122,12 +125,101 @@ class BookingAPITests(TestCase):
         repeated_booking = self.create_booking(seats=[self.seats[0].pk])
         self.assertEqual(repeated_booking.status_code, 409)
 
+    def test_customer_can_hold_seats_and_confirm_without_payment(self):
+        hold = self.client.post(
+            "/api/bookings/holds/",
+            {
+                "cinema_slug": self.cinema.slug,
+                "show": self.show.pk,
+                "seats": [self.seats[0].pk],
+            },
+            format="json",
+        )
+
+        self.assertEqual(hold.status_code, 201, hold.data)
+        self.assertEqual(hold.data["status"], Booking.Status.HELD)
+        self.assertEqual(hold.data["total_amount"], "190.00")
+        self.assertIsNotNone(hold.data["hold_expires_at"])
+
+        availability = self.client.get(
+            f"/api/shows/{self.show.pk}/seats/",
+            {"cinema_slug": self.cinema.slug},
+        )
+        states = {
+            seat["seat_number"]: seat["status"]
+            for seat in availability.data
+        }
+        self.assertEqual(states, {"A1": "HELD", "A2": "AVAILABLE"})
+
+        duplicate_hold = self.client.post(
+            "/api/bookings/holds/",
+            {
+                "cinema_slug": self.cinema.slug,
+                "show": self.show.pk,
+                "seats": [self.seats[0].pk],
+            },
+            format="json",
+        )
+        self.assertEqual(duplicate_hold.status_code, 409)
+
+        confirmed = self.client.post(
+            f"/api/bookings/{hold.data['id']}/confirm/",
+            {},
+            format="json",
+        )
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(confirmed.data["status"], Booking.Status.CONFIRMED)
+        states = {
+            seat["seat_number"]: seat["status"]
+            for seat in self.client.get(
+                f"/api/shows/{self.show.pk}/seats/",
+                {"cinema_slug": self.cinema.slug},
+            ).data
+        }
+        self.assertEqual(states["A1"], "BOOKED")
+
+    def test_expired_holds_release_seats_and_cannot_be_confirmed(self):
+        hold = self.client.post(
+            "/api/bookings/holds/",
+            {
+                "cinema_slug": self.cinema.slug,
+                "show": self.show.pk,
+                "seats": [self.seats[0].pk],
+            },
+            format="json",
+        )
+        self.assertEqual(hold.status_code, 201)
+
+        with cinema_schema(self.cinema.schema_name):
+            Booking.objects.filter(pk=hold.data["id"]).update(
+                hold_expires_at=timezone.now() - timedelta(seconds=1),
+            )
+
+        availability = self.client.get(
+            f"/api/shows/{self.show.pk}/seats/",
+            {"cinema_slug": self.cinema.slug},
+        )
+        self.assertEqual(availability.data[0]["status"], "AVAILABLE")
+        self.assertTrue(availability.data[0]["is_available"])
+
+        confirmation = self.client.post(
+            f"/api/bookings/{hold.data['id']}/confirm/",
+            {},
+            format="json",
+        )
+        self.assertEqual(confirmation.status_code, 410)
+        with cinema_schema(self.cinema.schema_name):
+            self.assertEqual(
+                Booking.objects.get(pk=hold.data["id"]).status,
+                Booking.Status.EXPIRED,
+            )
+
     def test_same_screen_seat_can_be_booked_for_another_show(self):
         with cinema_schema(self.cinema.schema_name):
             second_show = Show.objects.create(
                 movie=self.movie,
                 screen=self.screen,
-                show_date="2026-10-20",
+                show_date=self.show_date,
                 start_time="18:00:00",
                 end_time="20:00:00",
             )

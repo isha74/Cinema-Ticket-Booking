@@ -1,7 +1,9 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from cinema.models import Cinema
@@ -114,13 +116,20 @@ class ShowWorkflowAPITests(TestCase):
             format="json",
         )
 
-    def create_show(self, *, start="14:00:00", end="16:00:00", movie=None):
+    def create_show(
+        self,
+        *,
+        start="14:00:00",
+        end="16:00:00",
+        movie=None,
+        show_date="2026-10-20",
+    ):
         return self.client.post(
             "/api/shows/",
             {
                 "movie": (movie or self.movie).pk,
                 "screen": self.screen.pk,
-                "show_date": "2026-10-20",
+                "show_date": show_date,
                 "start_time": start,
                 "end_time": end,
             },
@@ -258,7 +267,6 @@ class ShowWorkflowAPITests(TestCase):
         paths = (
             ("/api/shows/screens/", "get"),
             (f"/api/shows/screens/{self.screen.pk}/configure-layout/", "post"),
-            ("/api/shows/", "get"),
             ("/api/shows/", "post"),
         )
         for user in (self.super_admin, self.user):
@@ -271,3 +279,99 @@ class ShowWorkflowAPITests(TestCase):
                         format="json" if method == "post" else None,
                     )
                     self.assertEqual(response.status_code, 403)
+
+        self.client.force_authenticate(self.tenant_admin)
+        self.assertEqual(self.client.get("/api/shows/").status_code, 200)
+
+    def test_customers_can_browse_active_shows_by_cinema_movie_and_date(self):
+        self.configure_layout()
+        show_date = timezone.localdate() + timedelta(days=1)
+        show = self.create_show(show_date=show_date.isoformat())
+        self.assertEqual(show.status_code, 201)
+        prices = self.client.put(
+            f"/api/shows/{show.data['id']}/prices/",
+            {
+                "prices": [
+                    {"seat_type": "NORMAL", "price": "190.00"},
+                    {"seat_type": "GOLD", "price": "250.00"},
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(prices.status_code, 200)
+
+        with cinema_schema(self.other_cinema.schema_name):
+            other_seat = Seat.objects.create(
+                screen=self.other_screen,
+                row="A",
+                seat_number="A1",
+                position=1,
+                seat_type="NORMAL",
+            )
+            other_show = Show.objects.create(
+                movie=self.other_movie,
+                screen=self.other_screen,
+                show_date=show_date,
+                start_time="18:00:00",
+                end_time="20:00:00",
+            )
+            ShowSeatPrice.objects.create(
+                show=other_show,
+                seat_type=other_seat.seat_type,
+                price=Decimal("180.00"),
+            )
+
+        self.client.force_authenticate(self.user)
+        response = self.client.get(
+            "/api/shows/",
+            {
+                "date": show_date.isoformat(),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        shows_by_cinema = {
+            show["cinema_slug"]: show
+            for show in response.data
+        }
+        self.assertEqual(set(shows_by_cinema), {self.cinema.slug, self.other_cinema.slug})
+        self.assertEqual(shows_by_cinema[self.cinema.slug]["movie_title"], self.movie.title)
+        self.assertEqual(shows_by_cinema[self.cinema.slug]["seats_available"], 4)
+        self.assertEqual(
+            shows_by_cinema[self.cinema.slug]["prices"],
+            {"NORMAL": "190.00", "GOLD": "250.00"},
+        )
+
+        filtered_response = self.client.get(
+            "/api/shows/",
+            {
+                "cinema_slug": self.cinema.slug,
+                "movie_id": self.movie.pk,
+                "date": show_date.isoformat(),
+            },
+        )
+        self.assertEqual(filtered_response.status_code, 200)
+        self.assertEqual(len(filtered_response.data), 1)
+        self.assertEqual(filtered_response.data[0]["cinema_slug"], self.cinema.slug)
+
+    def test_show_discovery_is_customer_only_and_validates_filters(self):
+        response = self.client.get("/api/shows/discover/")
+        self.assertEqual(response.status_code, 403)
+
+        self.client.force_authenticate(self.user)
+        invalid_date = self.client.get(
+            "/api/shows/discover/",
+            {"date": "not-a-date"},
+        )
+        past_date = self.client.get(
+            "/api/shows/discover/",
+            {"date": (timezone.localdate() - timedelta(days=1)).isoformat()},
+        )
+        self.assertEqual(invalid_date.status_code, 400)
+        self.assertEqual(past_date.status_code, 400)
+
+        self.client.force_authenticate(self.tenant_admin)
+        self.assertEqual(
+            self.client.get("/api/shows/discover/").status_code,
+            403,
+        )

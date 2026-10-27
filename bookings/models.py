@@ -3,6 +3,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from shows.models import Seat, Show
 
@@ -13,8 +14,10 @@ def generate_booking_reference():
 
 class Booking(models.Model):
     class Status(models.TextChoices):
+        HELD = "HELD", "Held"
         CONFIRMED = "CONFIRMED", "Confirmed"
         CANCELLED = "CANCELLED", "Cancelled"
+        EXPIRED = "EXPIRED", "Expired"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
@@ -34,6 +37,7 @@ class Booking(models.Model):
         editable=False,
     )
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    hold_expires_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
@@ -46,6 +50,14 @@ class Booking(models.Model):
 
     def __str__(self):
         return self.booking_reference
+
+    @property
+    def is_hold_active(self):
+        return (
+            self.status == self.Status.HELD
+            and self.hold_expires_at is not None
+            and self.hold_expires_at > timezone.now()
+        )
 
 
 class BookingSeat(models.Model):

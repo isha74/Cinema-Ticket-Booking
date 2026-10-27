@@ -26,9 +26,6 @@ def ensure_booking_tables(schema_name):
             f"Cannot initialize schema '{schema_name}': "
             "bookings_bookingseat exists without bookings_booking."
         )
-    if booking_exists and seat_exists:
-        return
-
     from .models import Booking, BookingSeat
 
     with cinema_schema(schema_name):
@@ -37,3 +34,17 @@ def ensure_booking_tables(schema_name):
                 schema_editor.create_model(Booking)
             if not seat_exists:
                 schema_editor.create_model(BookingSeat)
+        with connection.cursor() as cursor:
+            columns = {
+                column.name
+                for column in connection.introspection.get_table_description(
+                    cursor,
+                    Booking._meta.db_table,
+                )
+            }
+        if "hold_expires_at" not in columns:
+            with connection.schema_editor() as schema_editor:
+                schema_editor.add_field(
+                    Booking,
+                    Booking._meta.get_field("hold_expires_at"),
+                )

@@ -6,13 +6,13 @@ This project provides APIs for account authentication, cinema registration and a
 
 Seat layout is configured once for a screen. Shows refer to that screen and have their own category prices, so the same seat can have different prices at different showtimes.
 
-Customer seat booking, booking history, cancellation, and ticket-reference generation are implemented. Customer-facing cinema/movie/show discovery, payment processing, and downloadable ticket issuance are not implemented yet.
+Customer show browsing across active cinema schemas, seat availability, booking holds, confirmation, booking history, and cancellation are implemented. Payment processing and downloadable ticket issuance are not implemented.
 
 ## Roles
 
 - **Super Admin:** approves or rejects cinema registrations and manages platform-level cinema administration.
-- **Tenant Admin:** manages the cinema they own. Only Tenant Admins can use screen, seat-layout, show, and show-price APIs.
-- **User:** regular customer account. Can view active show seat availability and manage their own bookings; customer-facing cinema/movie/show discovery is not implemented yet.
+- **Tenant Admin:** manages the cinema they own. Only Tenant Admins can create shows and manage screens, seat layouts, and show prices.
+- **User:** regular customer account. Can browse active cinema/movie/show data, view show seat availability, and manage their own bookings.
 
 Protected endpoints require a JWT access token:
 
@@ -47,7 +47,7 @@ Example:
 }
 ```
 
-The API creates the Tenant Admin and the cinema, generates its slug and PostgreSQL schema name, and initially marks the cinema **Pending**.
+The API creates the Tenant Admin and the cinema, generates its slug and PostgreSQL schema name, and initially marks the cinema **Pending**. The Tenant Admin account exists at this point but cannot sign in until a Super Admin approves the cinema. A login attempt while pending returns `401 Unauthorized` with an approval-pending message.
 
 ### 2. Approve the cinema
 
@@ -55,11 +55,13 @@ A Super Admin approves the registration:
 
 **`POST /api/cinemas/{cinema_id}/approve/`**
 
-Rejected cinemas remain unavailable for normal active-cinema browsing. The Tenant Admin should sign in after registration/approval using the account created for the cinema.
+Rejected cinemas remain unavailable for normal active-cinema browsing, and their Tenant Admin cannot sign in. Rejected Tenant Admins receive a rejection message on login. After approval, the Tenant Admin can sign in using the account created during cinema registration.
 
 ### 3. Sign in as the Tenant Admin
 
 **`POST /api/auth/login/`**
+
+Only Tenant Admins whose assigned cinema has **Active** status receive login tokens.
 
 ```json
 {
@@ -231,11 +233,23 @@ Provide exactly one positive price for every seat type present in this screen's 
 
 **`GET /api/shows/{show_id}/prices/`** retrieves the prices configured for one show. `PUT` replaces that show's complete price set.
 
-### 9. Retrieve the seats and prices for a show
+### 9. Discover movies and customer bookable shows
 
-**`GET /api/shows/{show_id}/seats/`**
+Authenticated regular customers browse upcoming bookable shows across active cinema schemas with:
 
-For a customer, pass the cinema slug as a query parameter. The API returns the screen's permanent seats with the price for each seat's category in that particular show and an `is_available` flag. The Tenant Admin may call this endpoint using their own cinema from their JWT without the slug.
+**`GET /api/shows/`**
+
+```http
+GET /api/shows/?date=2026-10-25&cinema_slug=example-cinema&movie_id=7
+```
+
+All query parameters are optional. The date defaults to today; past or invalid dates are rejected. The response only includes shows at active cinemas for active movies when the screen has a seat layout and every seat category has a configured price. Each result includes cinema, movie (including poster URL), screen, show time, available-seat count, and prices. Tenant Admin `GET /api/shows/` lists shows for their own cinema; `POST /api/shows/` creates shows for that cinema. `/api/shows/discover/` remains available as an alias for customer browsing.
+
+### 10. Retrieve seats and their live status
+
+**`GET /api/shows/{show_id}/seats/?cinema_slug=<slug>`**
+
+The response includes the show's price for each seat category and a live `status` value: `AVAILABLE`, `HELD`, or `BOOKED`. The existing `is_available` boolean remains for compatibility (`true` only for `AVAILABLE`). Tenant Admins can call this for their own cinema using the cinema derived from their JWT.
 
 ```http
 GET /api/shows/42/seats/?cinema_slug=example-cinema
@@ -252,15 +266,16 @@ Example response item:
   "position": 1,
   "seat_type": "NORMAL",
   "price": "190.00",
+  "status": "AVAILABLE",
   "is_available": true
 }
 ```
 
-### 10. Book selected seats
+### 11. Hold seats and confirm a booking
 
-Only a regular authenticated customer can book. The cinema slug identifies the tenant; clients never send a PostgreSQL schema name. Send the show ID and selected seat IDs returned by the availability endpoint:
+Only a regular authenticated customer can book. The cinema slug identifies the tenant; clients never send a PostgreSQL schema name. Create a five-minute hold for seat IDs returned by the availability endpoint:
 
-**`POST /api/bookings/`**
+**`POST /api/bookings/holds/`**
 
 ```json
 {
@@ -270,11 +285,13 @@ Only a regular authenticated customer can book. The cinema slug identifies the t
 }
 ```
 
-The server verifies that the cinema and movie are active, the show has not started, all selected seats belong to its screen, and all selected seat categories have a configured show price. It calculates the total itself and stores each seat's price at booking time. The database and transaction prevent a seat from being active in two bookings for the same show. A seat may still be booked for a different show.
+The server validates the show, seats, and configured prices, calculates the total itself, and returns a booking with `HELD` status and `hold_expires_at`. Held seats are unavailable to other customers during the five-minute window. Confirm immediately, with no payment integration, using:
 
-A successful response includes the booking UUID, `booking_reference`, confirmed status, selected seats, and total. The booking reference is the current ticket/confirmation identifier; PDF/e-ticket generation and payment are not part of this implementation.
+**`POST /api/bookings/{booking_uuid}/confirm/`**
 
-### 11. View and cancel bookings
+Confirmation before expiry changes the booking to `CONFIRMED`. An expired hold returns `410 Gone`, changes to `EXPIRED`, and releases its seats. Expiry is also processed when customers browse shows/seats or access their bookings. `POST /api/bookings/` remains available for immediate confirmed booking without a hold.
+
+### 12. View and cancel bookings
 
 | Method | Endpoint | Purpose |
 |---|---|---|
@@ -294,11 +311,13 @@ Cancelled bookings and their price snapshots remain in history; their seats beco
 | Create, update, delete movies | `/api/movies/` | Tenant Admin for their own cinema |
 | Create/manage screens and layouts | `/api/shows/screens/...` | Tenant Admin only |
 | Create shows and configure prices | `/api/shows/...` | Tenant Admin only |
+| Browse customer shows | `GET /api/shows/` | Authenticated regular User, across active cinemas |
+| List own cinema shows / create shows | `GET` or `POST /api/shows/` | Tenant Admin, own cinema |
 | View show seat availability | `GET /api/shows/{id}/seats/` | Tenant Admin for own cinema; authenticated User with `cinema_slug` |
-| Create/view/cancel bookings | `/api/bookings/...` | Authenticated regular User only |
+| Hold, confirm, view, and cancel bookings | `/api/bookings/...` | Authenticated regular User only |
 | Payment and downloadable tickets | Not implemented | Not available yet |
 
-Super Admins are not allowed to use screen, seat, show, show-price, or booking APIs. Customer show discovery still needs a dedicated API.
+Super Admins are not allowed to use screen, seat, show, show-price, or booking APIs.
 
 ## Data and tenant-schema behavior
 
@@ -308,6 +327,6 @@ Super Admins are not allowed to use screen, seat, show, show-price, or booking A
 - Movie creation is an existing legacy exception and currently needs a checked `X-Schema-Name` header.
 - `python manage.py migrate` applies the Django migration history. Tenant schemas are created/provisioned by the existing tenant and app initialization logic.
 
-## Current limitations and next feature
+## Current limitations
 
-Customer-facing cinema/movie/show discovery, payment processing, and downloadable ticket generation remain future work. The client must never set ticket prices; booking totals and price snapshots are calculated from the selected show's configured `ShowSeatPrice` values.
+Payment processing and downloadable ticket generation are not implemented. The booking reference is the current confirmation identifier. The client must never set ticket prices; booking totals and price snapshots are calculated from the selected show's configured `ShowSeatPrice` values.

@@ -255,14 +255,40 @@ class ShowPriceConfigurationSerializer(serializers.Serializer):
 
 class ShowSeatListSerializer(SeatSerializer):
     price = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
     is_available = serializers.SerializerMethodField()
 
     class Meta(SeatSerializer.Meta):
-        fields = SeatSerializer.Meta.fields + ("price", "is_available")
+        fields = SeatSerializer.Meta.fields + ("price", "status", "is_available")
 
     def get_price(self, seat):
         prices = self.context["show_prices"]
         return prices.get(seat.seat_type)
 
     def get_is_available(self, seat):
-        return seat.pk not in self.context.get("booked_seat_ids", set())
+        return self.context["seat_statuses"].get(seat.pk, "AVAILABLE") == "AVAILABLE"
+
+    def get_status(self, seat):
+        return self.context["seat_statuses"].get(seat.pk, "AVAILABLE")
+
+
+class CustomerShowSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    cinema_slug = serializers.CharField(source="screen.cinema.slug")
+    cinema_name = serializers.CharField(source="screen.cinema.name")
+    city = serializers.CharField(source="screen.cinema.city")
+    movie_id = serializers.IntegerField(source="movie.id")
+    movie_title = serializers.CharField(source="movie.title")
+    movie_poster = serializers.ImageField(source="movie.poster", allow_null=True)
+    description = serializers.CharField(source="movie.description")
+    duration = serializers.IntegerField(source="movie.duration")
+    language = serializers.CharField(source="movie.language")
+    genre = serializers.CharField(source="movie.genre")
+    release_date = serializers.DateField(source="movie.release_date")
+    screen_id = serializers.IntegerField(source="screen.id")
+    screen_name = serializers.CharField(source="screen.name")
+    show_date = serializers.DateField()
+    start_time = serializers.TimeField()
+    end_time = serializers.TimeField()
+    seats_available = serializers.IntegerField()
+    prices = serializers.DictField()

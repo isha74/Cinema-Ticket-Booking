@@ -20,7 +20,7 @@ Only Tenant Admins can use the current screen, seat, show, and show-price endpoi
 
 - `POST /api/auth/register/` creates a regular User account.
 - `POST /api/cinemas/register/` creates a Tenant Admin and a Pending cinema together.
-- `POST /api/auth/login/` returns access and refresh tokens with the user's role claim.
+- `POST /api/auth/login/` returns access and refresh tokens with the user's role claim. Tenant Admins can sign in only after their assigned cinema is approved and Active; pending or rejected registrations receive a clear `401 Unauthorized` response.
 - `POST /api/auth/refresh/` refreshes an access token.
 - `POST /api/cinemas/{id}/approve/` and `/reject/` are Super Admin operations.
 - Cinema list/detail and management permissions depend on the account role and cinema status.
@@ -115,17 +115,21 @@ Include exactly one positive price for each seat type present on the screen. The
 
 **`GET /api/shows/{show_id}/prices/`** retrieves the configured prices.
 
-### 5. Retrieve seats with show prices
+### 5. Customer show discovery and seat availability
 
-**`GET /api/shows/{show_id}/seats/`** returns the screen's permanent seat records with the matching seat-type price and `is_available` flag for that show. A regular User must pass `?cinema_slug=<slug>`; the Tenant Admin uses the cinema derived from their JWT. The response is only visible to customers for active cinemas and active movies.
+Authenticated regular Users browse shows across active cinema schemas with **`GET /api/shows/`**. Optional query parameters are `date=YYYY-MM-DD`, `cinema_slug=<slug>`, and `movie_id=<id>`; the date defaults to today. Only upcoming shows at active cinemas and for active movies are returned, and a show must have a configured seat layout and a price for every seat category. Tenant Admins continue to use `GET /api/shows/` for their own cinema and `POST /api/shows/` to create shows; customers cannot create shows. `/api/shows/discover/` remains available as a customer-browsing alias.
+
+**`GET /api/shows/{show_id}/seats/?cinema_slug=<slug>`** returns the screen's permanent seat records with the matching show price and live `status` (`AVAILABLE`, `HELD`, or `BOOKED`). The existing `is_available` boolean remains in the response and is true only for `AVAILABLE`. Customers must pass the cinema slug; the Tenant Admin uses the cinema derived from their JWT. Customer access is limited to active cinemas and active movies.
 
 ## Booking management
 
-Only authenticated regular Users can book, list, view, or cancel bookings. Customer requests select a cinema by its public `cinema_slug`; PostgreSQL schema names are never accepted from the customer.
+Only authenticated regular Users can hold, confirm, book, list, view, or cancel bookings. Customer requests select a cinema by its public `cinema_slug`; PostgreSQL schema names are never accepted from the customer.
 
 | Method | Endpoint | Behavior |
 |---|---|---|
-| `POST` | `/api/bookings/` | Create a confirmed booking for selected seats |
+| `POST` | `/api/bookings/holds/` | Hold selected seats for five minutes |
+| `POST` | `/api/bookings/{booking_uuid}/confirm/` | Confirm an unexpired hold immediately, without payment |
+| `POST` | `/api/bookings/` | Create an immediately confirmed booking (legacy flow) |
 | `GET` | `/api/bookings/my/` | List the authenticated customer's bookings |
 | `GET` | `/api/bookings/{booking_uuid}/` | Retrieve one of the customer's bookings |
 | `POST` | `/api/bookings/{booking_uuid}/cancel/` | Cancel before show start; seats become available again |
@@ -140,9 +144,19 @@ Example create request:
 }
 ```
 
+The hold and immediate-booking APIs accept the same JSON request:
+
+```json
+{
+  "cinema_slug": "example-cinema",
+  "show": 42,
+  "seats": [101, 102]
+}
+```
+
 The API validates that the cinema and movie are active, the show has not started, and every selected seat belongs to the show's screen. It calculates the total from that show's `ShowSeatPrice` records; clients cannot submit prices. Each booking seat stores `price_at_booking`, preserving the charged price if show prices are later changed.
 
-The booking transaction locks the show and selected seats, and a database uniqueness constraint prevents an active duplicate reservation for the same seat and show. Thus one physical seat can be booked for different showtimes, but not twice for the same show. A successful response includes a UUID booking ID, human-readable booking reference, confirmed status, price snapshots, and total amount.
+The booking transaction locks the show and selected seats, and a database uniqueness constraint prevents an active duplicate reservation for the same seat and show. Thus one physical seat can be booked for different showtimes, but not twice for the same show. A successful hold response includes a UUID booking ID, human-readable booking reference, `HELD` status, `hold_expires_at`, price snapshots, and total amount. Confirmation before the five-minute expiry changes its status to `CONFIRMED`. Confirming an expired hold returns `410 Gone`, marks it `EXPIRED`, and releases its seats; expired holds are also processed when customer show/seats/bookings are accessed.
 
 Cancelled bookings remain in the customer's history and retain their price snapshots; their seats can be booked again. Cancellation is rejected after the show starts. The booking reference is the confirmation identifier; payment and downloadable ticket generation are not implemented.
 
@@ -158,8 +172,8 @@ Cancelled bookings remain in the customer's history and retain their price snaps
 - Booking totals are calculated server-side from the selected show's category prices. Each booking seat stores a price snapshot so later price updates do not change past bookings.
 - Cancellation before the show starts releases seats while retaining the cancelled booking and price history.
 - Screens, movies, and cinemas that have booking history are protected from deletion; those delete requests return `409 Conflict`.
-- Cinema/movie/show discovery, payment processing, and downloadable ticket generation are not implemented. The booking reference is the confirmation identifier for now.
+- Payment processing and downloadable ticket generation are not implemented. The booking reference is the confirmation identifier for now.
 
 ## Automated checks
 
-The automated test suite covers authentication, cinema registration and access, movie permissions and validation, permanent seat-layout generation, screen capacity checks, show-specific prices, same-cinema validation, show overlap validation, tenant schema selection, and Tenant Admin-only access.
+The automated test suite covers authentication, cinema registration and access, movie permissions and validation, permanent seat-layout generation, screen capacity checks, show-specific prices, same-cinema validation, show overlap validation, customer show discovery and filtering, seat status, hold/expiry/confirmation, tenant schema selection, and Tenant Admin-only access.
