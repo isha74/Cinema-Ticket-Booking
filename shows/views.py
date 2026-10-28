@@ -21,7 +21,6 @@ from .permissions import (
     SeatListCreatePermission,
     ShowListCreatePermission,
     ShowSeatAvailabilityPermission,
-    CustomerOnlyPermission,
 )
 from .schema import cinema_schema, ensure_show_tables
 from .serializers import (
@@ -225,11 +224,7 @@ class ShowListCreateView(TenantSchemaViewMixin, generics.ListCreateAPIView):
         ).select_related("movie", "screen")
 
     def list(self, request, *args, **kwargs):
-        if request.user.role == User.Role.USER:
-            return Response(discover_customer_shows(request))
-        self.prepare_show(request)
-        with cinema_schema(self.cinema.schema_name):
-            return Response(self.get_serializer(self.get_queryset(), many=True).data)
+        return Response(discover_customer_shows(request))
 
     def create(self, request, *args, **kwargs):
         self.prepare_show(request)
@@ -265,7 +260,7 @@ class ShowDetailView(TenantSchemaViewMixin, generics.RetrieveAPIView):
 
 
 class CustomerShowDiscoveryView(APIView):
-    permission_classes = [CustomerOnlyPermission]
+    permission_classes = [ShowListCreatePermission]
 
     def get(self, request):
         return Response(discover_customer_shows(request))

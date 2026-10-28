@@ -51,12 +51,3 @@ class ShowListCreatePermission(BasePermission):
             return user.role == User.Role.TENANT_ADMIN
         return user.role in (User.Role.TENANT_ADMIN, User.Role.USER)
 
-
-class CustomerOnlyPermission(BasePermission):
-    def has_permission(self, request, view):
-        user = request.user
-        return (
-            user.is_authenticated
-            and not user.is_superuser
-            and user.role == User.Role.USER
-        )

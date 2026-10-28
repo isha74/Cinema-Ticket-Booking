@@ -321,6 +321,24 @@ class ShowWorkflowAPITests(TestCase):
                 price=Decimal("180.00"),
             )
 
+        other_date_show = self.create_show(
+            start="18:00:00",
+            end="20:00:00",
+            show_date=(show_date + timedelta(days=1)).isoformat(),
+        )
+        self.assertEqual(other_date_show.status_code, 201)
+        other_date_prices = self.client.put(
+            f"/api/shows/{other_date_show.data['id']}/prices/",
+            {
+                "prices": [
+                    {"seat_type": "NORMAL", "price": "190.00"},
+                    {"seat_type": "GOLD", "price": "250.00"},
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(other_date_prices.status_code, 200)
+
         self.client.force_authenticate(self.user)
         response = self.client.get(
             "/api/shows/",
@@ -341,6 +359,9 @@ class ShowWorkflowAPITests(TestCase):
             shows_by_cinema[self.cinema.slug]["prices"],
             {"NORMAL": "190.00", "GOLD": "250.00"},
         )
+        self.assertTrue(
+            all(show["show_date"] == show_date.isoformat() for show in response.data)
+        )
 
         filtered_response = self.client.get(
             "/api/shows/",
@@ -354,9 +375,27 @@ class ShowWorkflowAPITests(TestCase):
         self.assertEqual(len(filtered_response.data), 1)
         self.assertEqual(filtered_response.data[0]["cinema_slug"], self.cinema.slug)
 
-    def test_show_discovery_is_customer_only_and_validates_filters(self):
+        self.client.force_authenticate(self.tenant_admin)
+        tenant_admin_response = self.client.get(
+            "/api/shows/",
+            {"date": show_date.isoformat()},
+        )
+        self.assertEqual(tenant_admin_response.status_code, 200)
+        self.assertEqual(
+            {show["cinema_slug"] for show in tenant_admin_response.data},
+            {self.cinema.slug, self.other_cinema.slug},
+        )
+        self.assertTrue(
+            all(
+                show["show_date"] == show_date.isoformat()
+                for show in tenant_admin_response.data
+            )
+        )
+
+    def test_show_discovery_is_authenticated_and_validates_filters(self):
+        self.client.force_authenticate(user=None)
         response = self.client.get("/api/shows/discover/")
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
         self.client.force_authenticate(self.user)
         invalid_date = self.client.get(
@@ -373,5 +412,5 @@ class ShowWorkflowAPITests(TestCase):
         self.client.force_authenticate(self.tenant_admin)
         self.assertEqual(
             self.client.get("/api/shows/discover/").status_code,
-            403,
+            200,
         )
