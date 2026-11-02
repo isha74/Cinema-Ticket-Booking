@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import Q
 from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -270,11 +271,17 @@ def discover_customer_shows(request):
     cinema_slug = request.query_params.get("cinema_slug")
     movie_id_value = request.query_params.get("movie_id")
     date_value = request.query_params.get("date")
-    show_date = parse_date(date_value) if date_value else timezone.localdate()
+    today = timezone.localdate()
+    show_date = parse_date(date_value) if date_value else today
+    tenant_admin_default = (
+        not date_value
+        and request.user.role == User.Role.TENANT_ADMIN
+        and not request.user.is_superuser
+    )
 
     if show_date is None:
         raise ValidationError({"date": "Use the YYYY-MM-DD date format."})
-    if show_date < timezone.localdate():
+    if show_date < today:
         raise ValidationError({"date": "Choose today or a future date."})
 
     movie_id = None
@@ -300,24 +307,35 @@ def discover_customer_shows(request):
             continue
         prepare_show_schema(cinema)
         with cinema_schema(cinema.schema_name):
-            shows = (
-                Show.objects.filter(
-                    screen__cinema_id=cinema.pk,
-                    show_date=show_date,
-                    movie__status=Movie.Status.ACTIVE,
+            shows = Show.objects.filter(
+                screen__cinema_id=cinema.pk,
+                movie__status=Movie.Status.ACTIVE,
+            )
+            if tenant_admin_default:
+                shows = shows.filter(
+                    Q(show_date__gt=today)
+                    | Q(
+                        show_date=today,
+                        start_time__gt=timezone.localtime().time().replace(
+                            tzinfo=None
+                        ),
+                    )
                 )
-                .select_related("movie", "screen", "screen__cinema")
+            else:
+                shows = shows.filter(show_date=show_date)
+                if show_date == today:
+                    shows = shows.filter(
+                        start_time__gt=timezone.localtime().time().replace(
+                            tzinfo=None
+                        )
+                    )
+            shows = (
+                shows.select_related("movie", "screen", "screen__cinema")
                 .prefetch_related("seat_prices")
-                .order_by("start_time", "screen_id")
+                .order_by("show_date", "start_time", "screen_id")
             )
             if movie_id is not None:
                 shows = shows.filter(movie_id=movie_id)
-            if show_date == timezone.localdate():
-                shows = shows.filter(
-                    start_time__gt=timezone.localtime().time().replace(
-                        tzinfo=None
-                    )
-                )
 
             for show in shows:
                 seats = list(show.screen.seats.all())

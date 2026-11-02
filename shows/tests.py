@@ -1,5 +1,6 @@
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -122,8 +123,9 @@ class ShowWorkflowAPITests(TestCase):
         start="14:00:00",
         end="16:00:00",
         movie=None,
-        show_date="2026-10-20",
+        show_date=None,
     ):
+        show_date = show_date or timezone.localdate().isoformat()
         return self.client.post(
             "/api/shows/",
             {
@@ -241,6 +243,18 @@ class ShowWorkflowAPITests(TestCase):
 
         self.assertEqual(first.status_code, 201)
         self.assertEqual(overlap.status_code, 400)
+
+    def test_show_rejects_past_date(self):
+        self.configure_layout()
+        response = self.create_show(
+            show_date=(timezone.localdate() - timedelta(days=1)).isoformat()
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["show_date"][0],
+            "A show cannot be scheduled in the past.",
+        )
 
     def test_show_prices_must_cover_each_category_exactly_once(self):
         self.configure_layout()
@@ -391,6 +405,76 @@ class ShowWorkflowAPITests(TestCase):
                 for show in tenant_admin_response.data
             )
         )
+
+    def test_tenant_admin_without_date_sees_today_and_future_shows(self):
+        self.configure_layout()
+        today = timezone.localdate()
+        show_dates = (
+            today,
+            today + timedelta(days=1),
+            today + timedelta(days=3),
+        )
+
+        with cinema_schema(self.cinema.schema_name):
+            past_show = Show.objects.create(
+                movie=self.movie,
+                screen=self.screen,
+                show_date=today - timedelta(days=1),
+                start_time="14:00:00",
+                end_time="16:00:00",
+            )
+            ShowSeatPrice.objects.create(
+                show=past_show,
+                seat_type="NORMAL",
+                price=Decimal("190.00"),
+            )
+            ShowSeatPrice.objects.create(
+                show=past_show,
+                seat_type="GOLD",
+                price=Decimal("250.00"),
+            )
+
+        for show_date in show_dates:
+            show = self.create_show(show_date=show_date.isoformat())
+            self.assertEqual(show.status_code, 201)
+            prices = self.client.put(
+                f"/api/shows/{show.data['id']}/prices/",
+                {
+                    "prices": [
+                        {"seat_type": "NORMAL", "price": "190.00"},
+                        {"seat_type": "GOLD", "price": "250.00"},
+                    ]
+                },
+                format="json",
+            )
+            self.assertEqual(prices.status_code, 200)
+
+        noon = timezone.make_aware(datetime.combine(today, time(12, 0)))
+        with patch("shows.views.timezone.localtime", return_value=noon):
+            admin_response = self.client.get("/api/shows/")
+            self.assertEqual(admin_response.status_code, 200)
+            self.assertEqual(
+                {show["show_date"] for show in admin_response.data},
+                {show_date.isoformat() for show_date in show_dates},
+            )
+
+            specific_date_response = self.client.get(
+                "/api/shows/",
+                {"date": show_dates[1].isoformat()},
+            )
+            self.assertEqual(specific_date_response.status_code, 200)
+            self.assertEqual(
+                {show["show_date"] for show in specific_date_response.data},
+                {show_dates[1].isoformat()},
+            )
+
+            self.client.force_authenticate(self.user)
+            customer_response = self.client.get("/api/shows/")
+            self.assertEqual(customer_response.status_code, 200)
+            self.assertEqual(
+                {show["show_date"] for show in customer_response.data},
+                {today.isoformat()},
+            )
 
     def test_show_discovery_is_authenticated_and_validates_filters(self):
         self.client.force_authenticate(user=None)

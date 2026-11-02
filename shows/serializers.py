@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from movies.models import Movie
@@ -172,6 +173,11 @@ class ShowSerializer(serializers.ModelSerializer):
             "end_time",
             self.instance.end_time if self.instance else None,
         )
+
+        if show_date is not None and show_date < timezone.localdate():
+            raise serializers.ValidationError(
+                {"show_date": "A show cannot be scheduled in the past."}
+            )
 
         if movie is not None and movie.cinema_id != cinema.pk:
             raise serializers.ValidationError(
